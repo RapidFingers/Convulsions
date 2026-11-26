@@ -1,0 +1,4 @@
+{.profile: kernel.}
+from core/io import println
+proc main(): !void =
+  println("x")

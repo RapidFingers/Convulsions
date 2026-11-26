@@ -1,0 +1,7 @@
+{.profile: kernel.}
+from core/mem import cAllocator
+from core/string import concat
+proc main(): !void =
+  let a = cAllocator()
+  let s = try concat(a, "x")
+  defer: s.deinit()

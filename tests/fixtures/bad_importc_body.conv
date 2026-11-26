@@ -1,0 +1,4 @@
+{.profile: kernel.}
+proc f(): int {.importc: "f", cdecl.} = return 1
+proc main(): !void =
+  discard 1

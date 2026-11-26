@@ -1,0 +1,3 @@
+{.profile: kernel.}
+from cycle_a import aye
+proc bee(): int = return 1

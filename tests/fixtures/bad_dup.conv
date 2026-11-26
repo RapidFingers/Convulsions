@@ -1,0 +1,5 @@
+{.profile: kernel.}
+proc main(): !void =
+  discard 1
+proc main(): !void =
+  discard 1

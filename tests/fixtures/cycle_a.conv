@@ -1,0 +1,4 @@
+{.profile: kernel.}
+from cycle_b import bee
+proc main(): !void =
+  discard bee()

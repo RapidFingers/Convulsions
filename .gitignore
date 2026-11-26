@@ -1,0 +1,8 @@
+bin/
+build/
+nimcache/
+tests/tmp/
+tests/tester.exe
+tests/last_test.log
+*.exe
+*.o

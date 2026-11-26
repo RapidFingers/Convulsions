@@ -1,0 +1,7 @@
+{.profile: kernel.}
+{.header: "<cvnrt.h>".}
+
+type
+  Allocator* {.importc: "cvn_allocator", header: "<cvnrt.h>".} = object
+
+proc cAllocator*(): Allocator {.importc: "cvn_c_allocator", cdecl.}

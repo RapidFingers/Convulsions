@@ -1,0 +1,4 @@
+{.profile: kernel.}
+from priv_mod import hidden
+proc main(): !void =
+  discard 1

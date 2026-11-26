@@ -1,0 +1,7 @@
+{.profile: kernel.}
+{.header: "<cvnrt.h>".}
+
+from core/mem import Allocator
+
+proc concat*(a: Allocator, x: string, y: string): !string
+  {.importc: "cvn_str_concat", cdecl.}

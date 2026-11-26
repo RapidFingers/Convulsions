@@ -1,0 +1,4 @@
+{.profile: kernel.}
+from core/nope import x
+proc main(): !void =
+  discard 1

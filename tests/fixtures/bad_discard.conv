@@ -1,0 +1,3 @@
+{.profile: kernel.}
+proc main(): !void =
+  1

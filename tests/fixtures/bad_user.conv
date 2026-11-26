@@ -1,0 +1,3 @@
+{.profile: user.}
+proc main(): !void =
+  discard 1

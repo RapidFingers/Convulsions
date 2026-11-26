@@ -1,0 +1,4 @@
+{.profile: kernel.}
+{.header: "<cvnrt.h>".}
+
+proc println*(s: string): !void {.importc: "cvn_io_println", cdecl.}
