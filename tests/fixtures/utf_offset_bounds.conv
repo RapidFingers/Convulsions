@@ -1,0 +1,6 @@
+{.profile: kernel.}
+from core/string import runeOffset
+
+proc main(): !void =
+  let i = try runeOffset("abc", 99)
+  discard i

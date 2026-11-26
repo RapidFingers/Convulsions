@@ -7,14 +7,16 @@ type
   NodeKind* = enum
     nkModule, nkPragma, nkFromImport, nkTypeDecl, nkProcDecl, nkParam,
     nkBlock, nkLet, nkVar, nkDefer, nkReturn, nkDiscard, nkCall, nkField,
-    nkIdent, nkIntLit, nkStrLit, nkUnary, nkBinary, nkTry, nkTypeName,
-    nkPtrType, nkResultType
+    nkIdent, nkIntLit, nkStrLit, nkCharLit, nkUnary, nkBinary, nkTry,
+    nkTypeName, nkPtrType, nkResultType, nkFieldDecl, nkNamedField, nkAssign
 
   AstNode* = ref object
     line*: int
     col*: int
     typ*: Type
     symId*: int
+    convTo*: Type
+    typeRef*: Type
     case kind*: NodeKind
     of nkIdent:
       name*: string
@@ -22,6 +24,8 @@ type
       typeName*: string
     of nkIntLit:
       intVal*: int64
+    of nkCharLit:
+      charVal*: int
     of nkStrLit:
       strVal*: string
     of nkUnary, nkBinary:
@@ -48,6 +52,7 @@ type
       importedDecl*: bool
       cNameDecl*: string
       declPragmas*: seq[AstNode]
+      typeFields*: seq[AstNode]
     of nkParam:
       paramName*: string
       paramVar*: bool
@@ -71,6 +76,16 @@ type
       value*: AstNode
     of nkPtrType, nkResultType:
       elemType*: AstNode
+    of nkFieldDecl:
+      declFieldName*: string
+      declFieldExported*: bool
+      declFieldType*: AstNode
+    of nkNamedField:
+      namedName*: string
+      namedValue*: AstNode
+    of nkAssign:
+      lhs*: AstNode
+      rhs*: AstNode
 
 proc newNode*(kind: NodeKind; line, col: int): AstNode =
   AstNode(kind: kind, line: line, col: col)
@@ -87,10 +102,14 @@ proc dumpAst*(n: AstNode; indent = 0): string =
   of nkIdent: result.add " " & n.name
   of nkTypeName: result.add " " & n.typeName
   of nkIntLit: result.add " " & $n.intVal
+  of nkCharLit: result.add " '" & $n.charVal & "'"
   of nkStrLit: result.add " " & repr(n.strVal)
   of nkPragma: result.add " " & n.pragmaName & "=" & n.pragmaValue
   of nkFromImport: result.add " " & n.modulePath
   of nkTypeDecl: result.add " " & n.declName
+  of nkFieldDecl: result.add " " & n.declFieldName
+  of nkNamedField: result.add " " & n.namedName
+  of nkAssign: result.add " ="
   of nkProcDecl: result.add " " & n.procName
   of nkField: result.add " ." & n.fieldName
   of nkBinary, nkUnary: result.add " " & n.op
@@ -115,6 +134,9 @@ proc dumpAst*(n: AstNode; indent = 0): string =
       result.add dumpAst(a, indent + 1)
   of nkField:
     result.add dumpAst(n.obj, indent + 1)
+  of nkTypeDecl:
+    for f in n.typeFields:
+      result.add dumpAst(f, indent + 1)
   of nkTry:
     result.add dumpAst(n.operand, indent + 1)
   of nkBinary, nkUnary:
@@ -126,4 +148,11 @@ proc dumpAst*(n: AstNode; indent = 0): string =
     result.add dumpAst(n.paramTypeNode, indent + 1)
   of nkPtrType, nkResultType:
     result.add dumpAst(n.elemType, indent + 1)
+  of nkFieldDecl:
+    result.add dumpAst(n.declFieldType, indent + 1)
+  of nkNamedField:
+    result.add dumpAst(n.namedValue, indent + 1)
+  of nkAssign:
+    result.add dumpAst(n.lhs, indent + 1)
+    result.add dumpAst(n.rhs, indent + 1)
   else: discard

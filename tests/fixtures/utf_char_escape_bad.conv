@@ -1,0 +1,4 @@
+{.profile: kernel.}
+proc main(): !void =
+  let c = '\u{41}'
+  discard int(c)

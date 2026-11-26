@@ -1,0 +1,6 @@
+{.profile: kernel.}
+from objmod/lib import Widget, makeWidget
+
+proc main(): !void =
+  var w = makeWidget(7)
+  assert(w.secret == 42)

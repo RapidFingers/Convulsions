@@ -1,0 +1,9 @@
+{.profile: kernel.}
+type
+  A = object
+    b: B
+  B = object
+    a: A
+
+proc main(): !void =
+  discard 1

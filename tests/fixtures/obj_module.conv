@@ -1,0 +1,8 @@
+{.profile: kernel.}
+from objmod/lib import Widget, makeWidget
+from core/io import println
+
+proc main(): !void =
+  var w = makeWidget(7)
+  assert(w.id == 7)
+  try println("module-ok")

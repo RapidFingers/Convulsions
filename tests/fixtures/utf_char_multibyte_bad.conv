@@ -1,0 +1,4 @@
+{.profile: kernel.}
+proc main(): !void =
+  let c = 'ä'
+  discard int(c)

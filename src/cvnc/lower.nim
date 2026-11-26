@@ -1,6 +1,7 @@
 ## Понижение AST -> HIR: try, defer, builtin deinit, литералы.
 
 import std/tables
+import std/algorithm
 import diag, ast, types, symbols, sema, hir
 
 type
@@ -12,6 +13,7 @@ type
     instrs: seq[HirInstr]
     cleanups: seq[seq[seq[HirInstr]]]
     labelSeq: int
+    curFile: string
 
 proc newSlot(l: Lower; t: Type): int =
   result = l.slots.len
@@ -38,6 +40,19 @@ proc internString(l: Lower; s: string): int =
   l.prog.strings.add s
   l.prog.strings.len - 1
 
+proc flattenPath(n: AstNode): tuple[root: AstNode, path: seq[string]] =
+  var names: seq[string]
+  var cur = n
+  while cur != nil and cur.kind == nkField:
+    names.add cur.fieldName
+    cur = cur.obj
+  names.reverse()
+  (cur, names)
+
+proc rootSlot(l: Lower; n: AstNode): tuple[slot: int, rootPtr: bool] =
+  let sym = l.prog.syms[n.symId]
+  (l.symSlots[n.symId], sym.byRef)
+
 proc withLabel(ins: HirInstr; label: int): HirInstr =
   result = ins
   result.label = label
@@ -53,6 +68,12 @@ proc lowerExpr(l: Lower; n: AstNode): int =
     ins.dst = result
     ins.imm = n.intVal
     l.emit(ins)
+  of nkCharLit:
+    result = l.newSlot(n.typ)
+    var ins = newInstr(hiConstInt)
+    ins.dst = result
+    ins.imm = int64(n.charVal)
+    l.emit(ins)
   of nkStrLit:
     result = l.newSlot(n.typ)
     var ins = newInstr(hiConstStr)
@@ -63,7 +84,34 @@ proc lowerExpr(l: Lower; n: AstNode): int =
     if not l.symSlots.hasKey(n.symId):
       fail("E-INTERNAL", l.prog.entry.file, n.line, n.col,
            "нет слота для символа")
-    result = l.symSlots[n.symId]
+    let sym = l.prog.syms[n.symId]
+    if sym.byRef:
+      result = l.newSlot(sym.typ)
+      var ins = newInstr(hiLoadPtr)
+      ins.dst = result
+      ins.a = l.symSlots[n.symId]
+      l.emit(ins)
+    else:
+      result = l.symSlots[n.symId]
+  of nkField:
+    if n.obj.typ != nil and n.obj.typ.kind == tyString and
+       n.fieldName == "len":
+      let a = l.lowerExpr(n.obj)
+      result = l.newSlot(n.typ)
+      var ins = newInstr(hiStrLen)
+      ins.dst = result
+      ins.a = a
+      l.emit(ins)
+    else:
+      let (root, path) = flattenPath(n)
+      let rs = l.rootSlot(root)
+      result = l.newSlot(n.typ)
+      var ins = newInstr(hiPathGet)
+      ins.dst = result
+      ins.a = rs.slot
+      ins.rootPtr = rs.rootPtr
+      ins.path = path
+      l.emit(ins)
   of nkUnary:
     let a = l.lowerExpr(n.a)
     result = l.newSlot(n.typ)
@@ -91,16 +139,107 @@ proc lowerExpr(l: Lower; n: AstNode): int =
     ins.imm = 0
     l.emit(ins)
   of nkCall:
-    let callee = l.prog.syms[n.symId]
-    if callee.builtin == "deinit":
+    if n.convTo != nil:
       let a = l.lowerExpr(n.args[0])
-      var ins = newInstr(hiDeinit)
+      result = l.newSlot(n.typ)
+      var ins = newInstr(hiConv)
+      ins.dst = result
       ins.a = a
+      ins.convType = n.convTo
+      l.emit(ins)
+      return
+    let callee = l.prog.syms[n.symId]
+    if callee.kind == skType:
+      let t = n.typeRef
+      result = l.newSlot(t)
+      var init = newInstr(hiObjInit)
+      init.dst = result
+      init.typeRef = t
+      l.emit(init)
+      for a in n.args:
+        let v = l.lowerExpr(a.namedValue)
+        var st = newInstr(hiPathSet)
+        st.a = result
+        st.b = v
+        st.path = @[a.namedName]
+        st.rootPtr = false
+        l.emit(st)
+      return
+    if callee.builtin in ["sizeof", "alignof", "offsetof"]:
+      result = l.newSlot(n.typ)
+      var ins = newInstr(
+        case callee.builtin
+        of "sizeof": hiSizeof
+        of "alignof": hiAlignof
+        else: hiOffsetof)
+      ins.dst = result
+      ins.typeRef = n.typeRef
+      if callee.builtin == "offsetof":
+        ins.text = n.args[1].name
+      l.emit(ins)
+      return
+    if callee.builtin == "deinit":
+      let arg = n.args[0]
+      if arg.kind == nkField:
+        let (root, path) = flattenPath(arg)
+        let rs = l.rootSlot(root)
+        var ins = newInstr(hiPathDeinit)
+        ins.a = rs.slot
+        ins.rootPtr = rs.rootPtr
+        ins.path = path
+        l.emit(ins)
+        return -1
+      elif arg.kind == nkIdent and l.prog.syms[arg.symId].byRef:
+        var ins = newInstr(hiPathDeinit)
+        ins.a = l.symSlots[arg.symId]
+        ins.rootPtr = true
+        l.emit(ins)
+        return -1
+      else:
+        let a = l.lowerExpr(arg)
+        var ins = newInstr(hiDeinit)
+        ins.a = a
+        l.emit(ins)
+        return -1
+    if callee.builtin == "assert":
+      let cond = l.lowerExpr(n.args[0])
+      var ins = newInstr(hiAssert)
+      ins.a = cond
+      ins.where = l.curFile & ":" & $n.line
+      if n.args.len == 2:
+        ins.text = n.args[1].strVal
       l.emit(ins)
       return -1
     var argSlots: seq[int]
-    for a in n.args:
-      argSlots.add l.lowerExpr(a)
+    for i, a in n.args:
+      let isVar = i < callee.paramVars.len and callee.paramVars[i]
+      if isVar:
+        if a.kind == nkIdent and l.prog.syms[a.symId].byRef:
+          argSlots.add l.symSlots[a.symId]
+        else:
+          let (root, path) =
+            if a.kind == nkField: flattenPath(a)
+            else: (a, newSeq[string]())
+          let rs = l.rootSlot(root)
+          let ps = l.newSlot(ptrTo(a.typ))
+          var ad = newInstr(hiPathAddr)
+          ad.dst = ps
+          ad.a = rs.slot
+          ad.rootPtr = rs.rootPtr
+          ad.path = path
+          l.emit(ad)
+          argSlots.add ps
+      else:
+        if a.kind == nkIdent and l.prog.syms[a.symId].byRef:
+          let sym = l.prog.syms[a.symId]
+          let s = l.newSlot(sym.typ)
+          var ld = newInstr(hiLoadPtr)
+          ld.dst = s
+          ld.a = l.symSlots[a.symId]
+          l.emit(ld)
+          argSlots.add s
+        else:
+          argSlots.add l.lowerExpr(a)
     var dst = -1
     if n.typ.kind != tyVoid:
       dst = l.newSlot(n.typ)
@@ -169,18 +308,54 @@ proc lowerStmt(l: Lower; n: AstNode) =
     l.emitCleanups()
     if n.value != nil:
       let v = l.lowerExpr(n.value)
-      var ins = newInstr(hiRetVal)
-      ins.a = v
-      l.emit(ins)
+      if l.procSym.typ.ret.kind == tyResult:
+        var ins = newInstr(hiRetVal)
+        ins.a = v
+        l.emit(ins)
+      else:
+        var ins = newInstr(hiRet)
+        ins.a = v
+        l.emit(ins)
     else:
       l.emit(newInstr(hiRet))
   of nkDiscard:
     discard l.lowerExpr(n.value)
+  of nkAssign:
+    if n.lhs.kind == nkIdent:
+      let sym = l.prog.syms[n.lhs.symId]
+      let v = l.lowerExpr(n.rhs)
+      if sym.byRef:
+        var ins = newInstr(hiStorePtr)
+        ins.a = l.symSlots[n.lhs.symId]
+        ins.b = v
+        l.emit(ins)
+      else:
+        var ins = newInstr(hiMov)
+        ins.dst = l.symSlots[n.lhs.symId]
+        ins.a = v
+        l.emit(ins)
+    elif n.lhs.kind == nkField:
+      let (root, path) = flattenPath(n.lhs)
+      let rs = l.rootSlot(root)
+      let v = l.lowerExpr(n.rhs)
+      var ins = newInstr(hiPathSet)
+      ins.a = rs.slot
+      ins.b = v
+      ins.rootPtr = rs.rootPtr
+      ins.path = path
+      l.emit(ins)
+    else:
+      fail("E-INTERNAL", l.prog.entry.file, n.line, n.col,
+           "некорректный lhs присваивания")
   else:
     discard l.lowerExpr(n)
 
 proc lowerProc(l: Lower; sym: Symbol): HirProc =
   l.procSym = sym
+  l.curFile = sym.modulePath
+  for m in l.prog.modules:
+    if m.path == sym.modulePath:
+      l.curFile = m.file
   l.slots = @[]
   l.symSlots = initTable[int, int]()
   l.instrs = @[]
@@ -189,7 +364,9 @@ proc lowerProc(l: Lower; sym: Symbol): HirProc =
   l.labelSeq = 0
 
   for ps in sym.paramSyms:
-    let slot = l.newSlot(ps.typ)
+    let slot =
+      if ps.byRef: l.newSlot(ptrTo(ps.typ))
+      else: l.newSlot(ps.typ)
     l.symSlots[ps.id] = slot
 
   l.lowerStmt(sym.node.body)

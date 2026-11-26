@@ -1,0 +1,9 @@
+{.profile: kernel.}
+
+type
+  Widget* = object
+    id*: int
+    secret: int
+
+proc makeWidget*(id: int): Widget =
+  return Widget(id: id, secret: 42)

@@ -1,0 +1,7 @@
+{.profile: kernel.}
+from core/string import runeAt
+
+proc main(): !void =
+  let s = b"\xFF"
+  let r = try runeAt(s, 0)
+  discard int(r)

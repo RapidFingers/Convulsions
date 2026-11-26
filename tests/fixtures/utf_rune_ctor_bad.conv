@@ -1,0 +1,6 @@
+{.profile: kernel.}
+from core/string import rune
+
+proc main(): !void =
+  let r = try rune(0xD800)
+  discard int(r)

@@ -1,0 +1,27 @@
+{.profile: kernel.}
+from core/mem import cAllocator, Allocator
+from core/string import concat, validate, runeLen
+from core/io import println
+
+type
+  Cfg* = object
+    name*: string
+    port*: int
+
+proc make(a: Allocator, n: string): !Cfg =
+  return Cfg(name: try concat(a, n, "!"), port: 80)
+
+proc main(): !void =
+  let a = cAllocator()
+  var c = try make(a, "svc")
+  defer: c.name.deinit()
+  assert(c.port == 80)
+  assert(c.name.len == 4)
+  assert(validate(c.name))
+  assert(runeLen(c.name) == 4)
+  let z = Cfg()
+  assert(z.port == 0)
+  assert(z.name.len == 0)
+  assert(validate(z.name))
+  defer: z.name.deinit()
+  try println(c.name)

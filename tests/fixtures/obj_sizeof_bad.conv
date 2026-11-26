@@ -1,0 +1,3 @@
+{.profile: kernel.}
+proc main(): !void =
+  assert(sizeof(1) == 8)

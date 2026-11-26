@@ -1,0 +1,19 @@
+{.profile: kernel.}
+from core/io import println
+
+type
+  Point* = object
+    x*, y*: int
+
+proc shifted(p: Point, dx: int): !Point =
+  var q = p
+  q.x = q.x + dx
+  return q
+
+proc main(): !void =
+  var p = Point(x: 1, y: 2)
+  let r = try shifted(p, 5)
+  assert(r.x == 6)
+  assert(r.y == 2)
+  assert(p.x == 1)
+  try println("return-ok")

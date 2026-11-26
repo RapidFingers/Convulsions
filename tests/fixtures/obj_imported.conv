@@ -1,0 +1,15 @@
+{.profile: kernel.}
+from core/mem import cAllocator, Allocator
+from core/io import println
+
+type
+  Ctx* = object
+    a*: Allocator
+    n*: int
+
+proc main(): !void =
+  let c = Ctx(a: cAllocator(), n: 1)
+  assert(c.n == 1)
+  assert(sizeof(Ctx) == 24)
+  assert(offsetof(Ctx, n) == 16)
+  try println("alloc-ok")

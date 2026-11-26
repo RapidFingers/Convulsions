@@ -1,0 +1,25 @@
+{.profile: kernel.}
+from core/io import println
+
+type
+  Point* = object
+    x*, y*: int
+
+proc shift(p: Point, dx: int): !Point =
+  var q = p
+  q.x = q.x + dx
+  return q
+
+proc bump(v: var int): void =
+  v = v + 1
+
+proc main(): !void =
+  var p = Point(x: 1, y: 2)
+  bump(p.x)
+  let q = try shift(p, 10)
+  assert(p.x == 2)
+  assert(q.x == 12)
+  assert(q.y == 2)
+  assert(sizeof(Point) == 16)
+  assert(offsetof(Point, y) == 8)
+  try println("objects ok")

@@ -1,0 +1,16 @@
+{.profile: kernel.}
+from core/io import println
+
+type
+  Node* = object
+    next*: ptr Node
+    value*: int
+
+proc main(): !void =
+  var a = Node()
+  var b = Node(value: 1)
+  a.next = b.next
+  assert(a.next == b.next)
+  assert(sizeof(Node) == 16)
+  assert(offsetof(Node, value) == 8)
+  try println("ptr-ok")

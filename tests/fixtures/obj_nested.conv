@@ -1,0 +1,32 @@
+{.profile: kernel.}
+from core/io import println
+
+type
+  Point* = object
+    x*, y*: int
+  Line* = object
+    a*: Point
+    b*: Point
+  Tagged* = object
+    p*: Point
+    label*: string
+
+proc main(): !void =
+  var l = Line(a: Point(x: 1, y: 2), b: Point(x: 3, y: 4))
+  assert(l.a.x == 1)
+  assert(l.b.y == 4)
+  l.a.x = 10
+  assert(l.a.x == 10)
+  assert(sizeof(Line) == 32)
+  assert(alignof(Line) == 8)
+  assert(offsetof(Line, b) == 16)
+  let z = Point()
+  assert(z.x == 0)
+  assert(z.y == 0)
+  l.b = z
+  assert(l.b.x == 0)
+  let t = Tagged()
+  assert(t.p.y == 0)
+  assert(t.label.len == 0)
+  defer: t.label.deinit()
+  try println("nested-ok")

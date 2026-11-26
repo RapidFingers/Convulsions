@@ -1,0 +1,7 @@
+{.profile: kernel.}
+type P = object
+  x: int
+
+proc main(): !void =
+  let p = P(z: 1)
+  discard p.x

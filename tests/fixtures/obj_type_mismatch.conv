@@ -1,0 +1,7 @@
+{.profile: kernel.}
+type P = object
+  x: int
+
+proc main(): !void =
+  var p = P(x: 1)
+  p.x = "s"

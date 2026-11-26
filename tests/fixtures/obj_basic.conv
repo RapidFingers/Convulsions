@@ -1,0 +1,36 @@
+{.profile: kernel.}
+from core/io import println
+
+type
+  Point* = object
+    x*: int
+    y*: int
+
+proc sum(p: Point): int =
+  return p.x + p.y
+
+proc bump(v: var int): void =
+  v = v + 1
+
+proc move(p: var Point, dx: int): void =
+  p.x = p.x + dx
+
+proc main(): !void =
+  var p = Point(x: 1, y: 2)
+  assert(p.x == 1)
+  assert(p.y == 2)
+  assert(sum(p) == 3)
+  assert(p.sum() == 3)
+  bump(p.x)
+  assert(p.x == 2)
+  move(p, 10)
+  assert(p.x == 12)
+  var q = p
+  q.x = 100
+  assert(p.x == 12)
+  p = q
+  assert(p.x == 100)
+  assert(sizeof(Point) == 16)
+  assert(alignof(Point) == 8)
+  assert(offsetof(Point, y) == 8)
+  try println("obj-ok")

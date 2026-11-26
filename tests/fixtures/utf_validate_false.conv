@@ -1,0 +1,9 @@
+{.profile: kernel.}
+from core/string import validate, runeLen
+from core/io import println
+
+proc main(): !void =
+  let s = b"\xC0\x80"
+  assert(not validate(s))
+  assert(runeLen(s) == 2)
+  try println("ok")

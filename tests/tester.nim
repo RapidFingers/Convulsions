@@ -21,7 +21,14 @@ template checkEq(a, b: untyped; msg: string) =
 proc run(cmd: string; args: seq[string]): tuple[code: int, output: string] =
   let p = startProcess(cmd, args = args,
                        options = {poUsePath, poStdErrToStdOut})
-  result.output = p.outputStream.readAll()
+  var s = ""
+  var buf = newString(4096)
+  while true:
+    let n = p.outputStream.readData(addr buf[0], buf.len)
+    if n <= 0:
+      break
+    s.add buf[0 ..< n]
+  result.output = s
   result.code = p.waitForExit()
   p.close()
 
@@ -53,6 +60,19 @@ block:
                      "--path=" & stdlib, "--runtime-path=" & runtime])
   checkEq r.code, 1, "profile: user запрещён"
   check "E-PROFILE-CONFLICT" in r.output, "profile: код ошибки"
+
+proc buildFixture(file, exeName: string): tuple[code: int, output: string,
+                                                exe: string] =
+  let exe = tmp / exeName
+  let b = run(cvn, @["build", fixtures / file, "-o", exe,
+                     "--path=" & fixtures, "--path=" & stdlib,
+                     "--runtime-path=" & runtime])
+  result.code = b.code
+  result.output = b.output
+  result.exe = exe
+  if b.code == 0 and not fileExists(result.exe) and
+     fileExists(result.exe & ExeSuffix):
+    result.exe.add ExeSuffix
 
 # ---------------------------------------------------------------- unit: lexer
 block:
@@ -88,6 +108,42 @@ block:
   expectCvnError("E-LEX-STRING", proc () =
     discard lex("let s = \"abc\n", "t.conv"))
 
+block:
+  let toks = lex("x = 'a'\n", "t.conv")
+  var ch = ""
+  for t in toks:
+    if t.kind == tkCharLit:
+      ch = t.text
+  checkEq ch, "97", "lexer: char-литерал"
+
+block:
+  let toks = lex("x = '\\xFF'\n", "t.conv")
+  var ch = ""
+  for t in toks:
+    if t.kind == tkCharLit:
+      ch = t.text
+  checkEq ch, "255", "lexer: char-escape \\xNN"
+
+block:
+  let toks = lex("x = b\"\\xFF\"\n", "t.conv")
+  var found = ""
+  for t in toks:
+    if t.kind == tkStringLit:
+      found = t.text
+  checkEq found, "\xFF", "lexer: b-строка"
+
+block:
+  expectCvnError("E-LEX-ESCAPE", proc () =
+    discard lex("let c = '\\u{41}'\n", "t.conv"))
+
+block:
+  expectCvnError("E-LEX-CHAR", proc () =
+    discard lex("let c = 'ä'\n", "t.conv"))
+
+block:
+  expectCvnError("E-LEX-UTF8", proc () =
+    discard lex("\xFF\n", "t.conv"))
+
 # --------------------------------------------------------------- unit: parser
 block:
   let src = "{.profile: kernel.}\nfrom core/mem import cAllocator\n\n" &
@@ -116,7 +172,7 @@ block:
   checkEq prog.entryMain.name, "main", "sema: точка входа"
   checkEq prog.entryMain.typ.ret.kind, tyResult, "sema: main возвращает !T"
   checkEq prog.entryMain.typ.ret.elem.kind, tyVoid, "sema: main это !void"
-  check prog.procs.len == 4, "sema: 4 процедуры (main + 3 stdlib)"
+  check prog.procs.len >= 4, "sema: stdlib-процедуры собраны"
   let hirs = lowerProgram(prog)
   check hirs.len == 1, "lower: одна не-external процедура"
   var hasDeinit = false
@@ -191,6 +247,25 @@ let negatives = [
   ("bad_defer_return.conv", "E-DEFER-CTRL"),
   ("bad_dup.conv", "E-DUP-SYMBOL"),
   ("bad_no_rettype.conv", "E-NO-RETTYPE"),
+  ("utf_char_escape_bad.conv", "E-LEX-ESCAPE"),
+  ("utf_char_multibyte_bad.conv", "E-LEX-CHAR"),
+  ("utf_rune_conv_bad.conv", "E-UNSUPPORTED"),
+  ("utf_assert_type_bad.conv", "E-TYPE"),
+  ("obj_private_read.conv", "E-PRIVATE"),
+  ("obj_private_ctor.conv", "E-PRIVATE"),
+  ("obj_let_mut.conv", "E-IMMUTABLE"),
+  ("obj_valueparam_mut.conv", "E-IMMUTABLE"),
+  ("obj_let_vararg.conv", "E-IMMUTABLE"),
+  ("obj_dup_field.conv", "E-DUP-FIELD"),
+  ("obj_unknown_field.conv", "E-FIELD"),
+  ("obj_posargs.conv", "E-UNSUPPORTED"),
+  ("obj_empty.conv", "E-TYPE"),
+  ("obj_cycle.conv", "E-TYPE"),
+  ("obj_objcmp.conv", "E-UNSUPPORTED"),
+  ("obj_type_mismatch.conv", "E-TYPE"),
+  ("obj_sizeof_bad.conv", "E-TYPE"),
+  ("obj_opaque_ctor.conv", "E-UNSUPPORTED"),
+  ("obj_ufcs_field_call.conv", "E-TYPE"),
 ]
 
 for item in negatives:
@@ -218,11 +293,92 @@ block:
     checkEq r.code, 0, "defers: exit code"
     checkEq r.output, "x\n", "defers: stdout"
 
+# ----------------------------------------------------------- C-юниты UTF-8
+block:
+  let ctest = tmp / ("test_utf" & ExeSuffix)
+  let b = run("gcc", @["-std=c11", "-Wall", "-Wextra", "-Werror",
+                       "-I", runtime, "-o", ctest,
+                       root / "tests" / "rt" / "test_utf.c",
+                       runtime / "cvnrt.c"])
+  checkEq b.code, 0, "c-unit: сборка (" & b.output & ")"
+  if b.code == 0:
+    let r = run(ctest, @[])
+    checkEq r.code, 0, "c-unit: запуск (" & r.output & ")"
+    check "c-utf-ok" in r.output, "c-unit: маркер"
+
+# ------------------------------------------------------------------ e2e: UTF-8
+block:
+  let b = buildFixture("utf_ok.conv", "utf_ok")
+  checkEq b.code, 0, "utf: собирается (" & b.output & ")"
+  if b.code == 0:
+    let r = run(b.exe, @[])
+    checkEq r.code, 0, "utf: exit code"
+    checkEq r.output, "привет🙂\n😀\n", "utf: stdout"
+
+block:
+  let b = buildFixture("utf_validate_false.conv", "utf_vf")
+  checkEq b.code, 0, "utf-validate: собирается (" & b.output & ")"
+  if b.code == 0:
+    let r = run(b.exe, @[])
+    checkEq r.code, 0, "utf-validate: exit code"
+    checkEq r.output, "ok\n", "utf-validate: stdout"
+
+let utfNegatives = [
+  ("utf_rune_bad.conv", "utf_rune_bad", "error[3]"),
+  ("utf_rune_bounds.conv", "utf_rune_bounds", "error[5]"),
+  ("utf_offset_bad.conv", "utf_offset_bad", "error[3]"),
+  ("utf_offset_bounds.conv", "utf_offset_bounds", "error[5]"),
+  ("utf_rune_ctor_bad.conv", "utf_rune_ctor_bad", "error[3]"),
+]
+
+for item in utfNegatives:
+  let b = buildFixture(item[0], item[1])
+  checkEq b.code, 0, item[0] & ": собирается (" & b.output & ")"
+  if b.code == 0:
+    let r = run(b.exe, @[])
+    checkEq r.code, 1, item[0] & ": exit code"
+    check item[2] in r.output, item[0] & ": ожидался " & item[2]
+
+block:
+  let b = buildFixture("utf_assert_fail.conv", "utf_assert_fail")
+  checkEq b.code, 0, "assert-fail: собирается (" & b.output & ")"
+  if b.code == 0:
+    let r = run(b.exe, @[])
+    checkEq r.code, 2, "assert-fail: exit code"
+    check "assertion failed" in r.output, "assert-fail: сообщение"
+
+block:
+  let badPath = tmp / "bad_source.conv"
+  writeFile(badPath, "{.profile: kernel.}\n\xFF\n")
+  let r = run(cvn, @["build", badPath, "-o", tmp / "bs",
+                     "--path=" & stdlib, "--runtime-path=" & runtime])
+  checkEq r.code, 1, "utf-source: exit code"
+  check "E-LEX-UTF8" in r.output, "utf-source: код ошибки"
+
+# ---------------------------------------------------------------- e2e: объекты
+let objPositives = [
+  ("obj_basic.conv", "obj_basic", "obj-ok\n"),
+  ("obj_nested.conv", "obj_nested", "nested-ok\n"),
+  ("obj_string.conv", "obj_string", "svc!\n"),
+  ("obj_return.conv", "obj_return", "return-ok\n"),
+  ("obj_ptr.conv", "obj_ptr", "ptr-ok\n"),
+  ("obj_imported.conv", "obj_imported", "alloc-ok\n"),
+  ("obj_module.conv", "obj_module", "module-ok\n"),
+]
+
+for item in objPositives:
+  let b = buildFixture(item[0], item[1])
+  checkEq b.code, 0, item[0] & ": собирается (" & b.output & ")"
+  if b.code == 0:
+    let r = run(b.exe, @[])
+    checkEq r.code, 0, item[0] & ": exit code"
+    checkEq r.output, item[2], item[0] & ": stdout"
+
 # ---------------------------------------------------------------- e2e: version
 block:
   let r = run(cvn, @["version"])
   checkEq r.code, 0, "version: exit code"
-  check "0.1.0" in r.output, "version: номер версии"
+  check "0.3.0" in r.output, "version: номер версии"
 
 if failures > 0:
   echo "\n", failures, " проверок провалено"

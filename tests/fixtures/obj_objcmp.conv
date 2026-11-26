@@ -1,0 +1,8 @@
+{.profile: kernel.}
+type P = object
+  x: int
+
+proc main(): !void =
+  let a = P(x: 1)
+  let b = P(x: 2)
+  assert(a == b)

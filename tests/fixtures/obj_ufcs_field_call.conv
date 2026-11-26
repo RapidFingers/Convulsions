@@ -1,0 +1,7 @@
+{.profile: kernel.}
+type P = object
+  len: int
+
+proc main(): !void =
+  var p = P(len: 1)
+  discard p.len()

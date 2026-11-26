@@ -1,0 +1,6 @@
+{.profile: kernel.}
+from objmod/lib import Widget
+
+proc main(): !void =
+  let w = Widget(id: 1, secret: 2)
+  discard w.id

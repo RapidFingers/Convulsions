@@ -1,0 +1,6 @@
+{.profile: kernel.}
+from core/mem import Allocator
+
+proc main(): !void =
+  let a = Allocator()
+  discard a

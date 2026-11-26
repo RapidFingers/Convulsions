@@ -282,7 +282,7 @@ $ ./build/server-fiber --listen :7777
 | builtins | `taskAllocator`, `currentExecutor`, `panic`, `assert`, `unreachable`, `abort`, `sizeof`, `alignof`, `offsetof`, `deinit` | всегда, импорт не нужен |
 | `core/mem` | `Allocator`, `cAllocator`, `pageAllocator`, `fixedAllocator`, `arenaAllocator`, `stackAllocator`, `debugAllocator` | есть в 0.9.0 |
 | `core/seq` | `newSeq`, `seqOf`, `dupe`, `add`, `setLen`, `toSlice` | есть в 0.9.0 |
-| `core/string` | `concat`, `dupe`, `find`, `split`, `runeAt`, `runeOffset`, `runes`, `validate` | есть в 0.9.0 |
+| `core/string` | `concat`, `dupe`, `find`, `split`, `runeAt`, `runeOffset`, `runeLen`, `runes`, `validate`, `rune`, `fromRune` | есть в 0.9.0 |
 | `core/error` | `ErrorCode`, `error`, `errorMessage`, `errorString` | есть в 0.9.0 |
 | `core/io` | `Fd`, `readFull`, `writeAll`, `println`, `listen`, `accept`, `close` | 0.9.0 (IOCP/epoll — M4) |
 | `core/concurrency` | `Task`, `Executor`-реализации, `Channel`, `Mutex`, `Select`, `parallel`, `withScope`, `spawnBlocking` | 0.9.0, кроме `Select` (v0.7) |
@@ -386,6 +386,10 @@ $ ./build/server-fiber --listen :7777
   `\u{...}` кодируется в UTF-8; в `char`-литерале `\u{...}` — ошибка (`char` — байт).
 - `r"..."` — без обработки экранирования; `"""..."""` — многострочный, экранирование
   не обрабатывается, содержимое начинается сразу после открывающих кавычек.
+- char-литерал `'a'` — байт: допустимы `\n \t \r \0 \\ \' \xNN`; `\u{...}` и
+  не-ASCII символы в `'...'` запрещены (char — байт, а не кодпоинт).
+- `b"..."` — байтовая строка с теми же escape, что у обычной; валидность UTF-8
+  не гарантируется, `validate` — единственная проверка.
 - Строковый литерал — уже `string` с NUL-инвариантом; он указывает на статический
   буфер только для чтения, `deinit()` для него — no-op (аллокатор литерала —
   `nullAllocator`, см. §3.3).
@@ -483,6 +487,10 @@ const MaxFrame = 1 << 20
 - `let` фиксирует привязку и значение: переприсваивание, передача в `var`-параметр
   и изменение полей запрещены; `var` разрешает всё перечисленное. Единственное
   исключение — встроенный `deinit` (§3.4): он допустим и для `let`.
+- Присваивание — инструкция `lhs = expr`, где `lhs` — переменная или цепочка полей
+  (`p.x`, `l.a.b`). Составные (`+=`) и цепочки `a = b = c` не поддерживаются.
+- Параметр `var T` — мутабельная ссылка: изменения видны вызывающему.
+  Value-параметр и `let`-локаль неизменяемы (`E-IMMUTABLE`).
 - Перегрузка по типам параметров разрешена; разрешение — по лучшему совпадению,
   при неоднозначности `E-OVERLOAD`. Значения по умолчанию не участвуют в выборе.
 - Именованные аргументы: `f(x = 1)`. Позиционные и именованные можно смешивать,
@@ -1752,6 +1760,22 @@ type
 - `proc`-значение в `kernel` содержит окружение, которое живёт в стеке или в
   арене вызывающего. Сохранять замыкание дольше его окружения — UAF; проверок нет.
 
+Объекты в `kernel` (v0.3):
+
+- Конструктор — `T(field: value, ...)` или `T()`; только именованные поля, порядок
+  произволен. Опущенные поля получают `0`/`false`/`NULL`, строковые — пустую строку
+  с NUL-инвариантом, вложенные объекты — рекурсивный zero. Позиционные аргументы,
+  неизвестные и повторные поля — ошибки (`E-UNSUPPORTED`, `E-FIELD`, `E-DUP-FIELD`).
+- `object` без полей запрещён (`E-TYPE`).
+- Поля идут в порядке объявления, естественное выравнивание; `{.packed.}`/`{.align.}`
+  появятся позже. `sizeof(T)`, `alignof(T)`, `offsetof(T, f)` доступны как константы.
+- Присваивание и передача по значению копируют структуру целиком; `string`/`ptr`
+  внутри копируются поверхностно — освобождение остаётся за программистом.
+- Поля видны по `*`; приватное поле недоступно из другого модуля (`E-PRIVATE`).
+- Цикл вложенности по значению запрещён (`E-TYPE`); цикл через `ptr T` разрешён.
+- Сравнение объектов (`==`/`<` и т.п.) не поддерживается в v0.3 (`E-UNSUPPORTED`).
+- Методов у `object` нет: чтение/запись — поля; поведение — процедуры с UFCS.
+
 ### 6.3 Дженерики
 
 ```conv
@@ -1931,10 +1955,13 @@ proc peek(w: weak ref Node): bool =
 | `s[i]` | байт `char` | нет |
 | `s[a..b]` | копия диапазона | да, `!string` |
 | `s.view(a..b)` | `Slice[char]` без копии | нет |
-| `runeAt(s, i)` | кодпоинт, начинающийся в байте `i` | нет |
-| `runeOffset(s, k)` | байтовое смещение `k`-го кодпоинта | нет |
-| `runes(s)` | итератор `(byteIdx, Rune)` | нет |
-| `validate(s)` | проверка UTF-8 | нет |
+| `runeAt(s, i): !Rune` | кодпоинт, начинающийся в байте `i` (bounds/invalid) | нет |
+| `runeOffset(s, k): !int` | байтовое смещение `k`-го кодпоинта; `k == runeLen(s)` → `len` | нет |
+| `runeLen(s): int` | число кодпоинтов; невалидный байт считается за один | нет |
+| `runes(s)` | итератор `(byteIdx, Rune)`; появится вместе с `iterator`/`for` (v0.2+) | нет |
+| `validate(s): bool` | строгая проверка UTF-8 | нет |
+| `rune(x: int): !Rune` | проверяемый конструктор кодпоинта | нет |
+| `fromRune(a, r): !string` | кодирование кодпоинта в UTF-8 | да |
 | `concat(a, x, y)` | склейка | да, `!string` |
 | `s.toCString()` | `cstring` (NUL гарантирован) | нет |
 | `fromCString(a, p)` | копия C-строки | да, `!string` |
@@ -1957,7 +1984,10 @@ proc firstWord(s: string): !string =
 
 - `runes` на невалидной последовательности выдаёт `Rune(0xFFFD)` и сдвигается
   на один байт: итератор обязан завершиться, а не зависнуть.
-- `runeAt`/`runeOffset` на невалидном байте возвращают `error.invalidArgument`.
+- `runeAt`/`runeOffset` на невалидном байте возвращают `error.invalidArgument`;
+  `runeAt` вне `[0, len)` и `runeOffset` вне `[0, runeLen]` — `error.bounds`.
+- `runes` требует `iterator`/`for`; до их появления перечисление кодпоинтов —
+  через `runeLen`/`runeOffset`/`runeAt` (v0.2).
 - Нормализация (NFC/NFD) не выполняется нигде. `core/unicode` (v0.7) даёт
   категории и `isAlpha`; сравнение строк — побайтовое, сортировка — побайтовая.
   Это значит, что `"ё"` и `"е"` + диакритика — разные строки, и так и должно быть.
@@ -1982,6 +2012,10 @@ proc firstWord(s: string): !string =
 | `int32` → `int64` | расширение | `int64(x)` | нет |
 | `int` → `uint` | | `uint(x)` | нет |
 | `int` → `float64` | | `float64(x)` | нет |
+| `char` → `Rune` | расширение | `Rune(c)` | нет |
+| `char` → `int` | | `int(c)` | нет |
+| `Rune` → `int` | | `int(r)` | нет |
+| `int` → `Rune` | | запрещено: `rune(x): !Rune` | нет |
 | `enum` ↔ `int` | | `ord(x)`, `Color(3)` | нет |
 | `distinct` ↔ база | | `Meters(x)`, `float64(m)` | нет |
 | `ptr A` → `ptr B` | | `cast[ptr B](p)` | нет |
@@ -2673,7 +2707,11 @@ _start → cvn_rt_init()
 | `E-CATCH-TYPE` | `catch:`-блок не даёт `T` |
 | `E-DEFER-CTRL` | `return`/`break`/`continue` внутри `defer` |
 | `E-DEFER-TRY` | `try` внутри `defer` (ошибку надо обработать `catch:`) |
+| `E-IMMUTABLE` | изменение `let`/value-параметра или передача в `var`-параметр |
+| `E-DUP-FIELD` | повтор поля в типе или конструкторе |
+| `E-FIELD` | неизвестное поле |
 | `E-LEX-*` | `E-LEX-CHAR`, `E-LEX-STRING`, `E-LEX-NUMBER`, `E-LEX-ESCAPE`, `E-LEX-COMMENT` |
+| `E-LEX-UTF8` | исходник не является валидным UTF-8 |
 | `E-PRAGMA-UNSUPPORTED` | прагма не реализована в этой версии |
 | `E-DISCARD-REQUIRED` | значение не использовано (нужен `discard`) |
 | `E-CLI`, `E-IO` | ошибка командной строки / ввода-вывода |

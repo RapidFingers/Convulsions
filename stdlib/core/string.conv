@@ -5,3 +5,21 @@ from core/mem import Allocator
 
 proc concat*(a: Allocator, x: string, y: string): !string
   {.importc: "cvn_str_concat", cdecl.}
+
+proc runeAt*(s: string, byteIdx: int): !Rune
+  {.importc: "cvn_str_rune_at", cdecl.}
+
+proc runeOffset*(s: string, runeIdx: int): !int
+  {.importc: "cvn_str_rune_offset", cdecl.}
+
+proc runeLen*(s: string): int
+  {.importc: "cvn_str_rune_len", cdecl.}
+
+proc validate*(s: string): bool
+  {.importc: "cvn_utf8_validate", cdecl.}
+
+proc rune*(x: int): !Rune
+  {.importc: "cvn_rune_checked", cdecl.}
+
+proc fromRune*(a: Allocator, r: Rune): !string
+  {.importc: "cvn_str_from_rune", cdecl.}

@@ -16,6 +16,7 @@ type
     node*: AstNode
     exported*: bool
     external*: bool
+    byRef*: bool
     modulePath*: string
     paramNames*: seq[string]
     paramVars*: seq[bool]

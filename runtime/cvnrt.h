@@ -56,6 +56,9 @@ typedef struct cvn_string {
   cvn_allocator alloc;
 } cvn_string;
 
+/* Валидная пустая строка: ptr[len] == '\0', cap = 1, аллокатор нулевой. */
+extern const cvn_string cvn_str_empty;
+
 typedef struct cvn_error {
   int32_t code;
   int32_t _pad;
@@ -73,12 +76,41 @@ typedef struct cvn_result_string {
   } u;
 } cvn_result_string;
 
+/* !Rune (uint32_t) и !int — канонические типы: cgen их не дублирует. */
+typedef struct cvn_result_u32 {
+  uint32_t tag;
+  uint32_t _pad;
+  union {
+    uint32_t ok;
+    cvn_error err;
+  } u;
+} cvn_result_u32;
+
+typedef struct cvn_result_i64 {
+  uint32_t tag;
+  uint32_t _pad;
+  union {
+    int64_t ok;
+    cvn_error err;
+  } u;
+} cvn_result_i64;
+
 cvn_allocator     cvn_c_allocator(void);
 cvn_result_string cvn_str_concat(cvn_allocator a, cvn_string x, cvn_string y);
 void              cvn_str_deinit(cvn_string *s);
 cvn_error         cvn_io_println(cvn_string s);
+
+/* UTF-8: декодирование, проверка, обратное кодирование. */
+bool              cvn_utf8_validate(cvn_string s);
+cvn_result_u32    cvn_str_rune_at(cvn_string s, int64_t byte_idx);
+cvn_result_i64    cvn_str_rune_offset(cvn_string s, int64_t rune_idx);
+int64_t           cvn_str_rune_len(cvn_string s);
+cvn_result_u32    cvn_rune_checked(int64_t x);
+cvn_result_string cvn_str_from_rune(cvn_allocator a, uint32_t r);
+
 void              cvn_rt_init(void);
 void              cvn_rt_report_error(cvn_error e);
+void              cvn_rt_assert_fail(const char *where, const char *msg);
 const char       *cvn_error_message(int32_t code);
 
 #ifdef __cplusplus

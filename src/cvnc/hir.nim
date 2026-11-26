@@ -6,7 +6,9 @@ type
   HirOp* = enum
     hiLabel, hiJmp, hiConstInt, hiConstStr, hiCall, hiDeinit, hiCheckResult,
     hiExtractOk, hiMov, hiBinary, hiUnary, hiRet, hiRetVal, hiRetErrFrom,
-    hiNop
+    hiConv, hiStrLen, hiAssert, hiPathGet, hiPathSet, hiPathAddr,
+    hiPathDeinit, hiLoadPtr, hiStorePtr, hiObjInit, hiSizeof, hiAlignof,
+    hiOffsetof, hiNop
 
   HirInstr* = object
     op*: HirOp
@@ -18,6 +20,11 @@ type
     strIdx*: int
     label*: int
     text*: string
+    where*: string
+    convType*: Type
+    typeRef*: Type
+    rootPtr*: bool
+    path*: seq[string]
     args*: seq[int]
 
   HirProc* = object

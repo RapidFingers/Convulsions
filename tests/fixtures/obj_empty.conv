@@ -1,0 +1,5 @@
+{.profile: kernel.}
+type E = object
+
+proc main(): !void =
+  discard 1

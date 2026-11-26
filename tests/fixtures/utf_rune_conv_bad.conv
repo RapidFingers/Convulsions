@@ -1,0 +1,4 @@
+{.profile: kernel.}
+proc main(): !void =
+  let r = Rune(65)
+  discard int(r)

@@ -2,12 +2,13 @@
 
 type
   TypeKind* = enum
-    tyVoid, tyInt, tyBool, tyChar, tyString, tyPointer, tyPtr, tyObject,
-    tyProc, tyResult, tyError, tyErrorCode, tyUnknown
+    tyVoid, tyInt, tyBool, tyChar, tyString, tyRune, tyPointer, tyPtr,
+    tyObject, tyProc, tyResult, tyError, tyErrorCode, tyUnknown
 
   Field* = object
     name*: string
     typ*: Type
+    exported*: bool
 
   Type* = ref object
     kind*: TypeKind
@@ -17,10 +18,22 @@ type
     name*: string
     cname*: string
     opaque*: bool
+    ownerModule*: string
     fields*: seq[Field]
 
 proc newType*(kind: TypeKind; name = ""): Type =
   Type(kind: kind, name: name)
+
+proc cSanitize*(s: string): string =
+  for c in s:
+    if c in {'a'..'z', 'A'..'Z', '0'..'9', '_'}:
+      result.add c
+    else:
+      result.add '_'
+
+proc ptrTo*(elem: Type): Type =
+  result = newType(tyPtr)
+  result.elem = elem
 
 proc isResult*(t: Type): bool =
   t != nil and t.kind == tyResult
@@ -59,6 +72,7 @@ proc typeName*(t: Type): string =
   of tyBool: "bool"
   of tyChar: "char"
   of tyString: "string"
+  of tyRune: "Rune"
   of tyPointer: "pointer"
   of tyPtr: "ptr " & typeName(t.elem)
   of tyObject:

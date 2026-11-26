@@ -162,13 +162,48 @@ proc parseTypeBody(p: var Parser): AstNode =
   discard p.expectKw(kwObject, "object")
   while p.at(tkPragmaOpen):
     pragmas.add p.parsePragmaBlock()
+  var fields: seq[AstNode]
+  var hasFields = false
   if p.at(tkColon):
-    p.failTok("E-UNSUPPORTED",
-              "поля object не поддерживаются в v0.1 (будут в v0.2)")
+    discard p.advance()
+    hasFields = true
+  elif p.at(tkNewline) and p.peek(1).kind == tkIndent and
+       p.peek(2).kind == tkIdent:
+    discard p.advance()
+    discard p.expect(tkIndent, "поля object")
+    hasFields = true
+  if hasFields:
+    p.skipNewlines()
+    while not p.at(tkDedent) and not p.at(tkEof):
+      var names: seq[tuple[name: string, exported: bool, line, col: int]]
+      while true:
+        if not p.at(tkIdent):
+          p.failTok("E-PARSE", "ожидалось имя поля")
+        let ft = p.cur
+        discard p.advance()
+        let fexp = p.accept(tkStar)
+        names.add (ft.text, fexp, ft.line, ft.col)
+        if p.at(tkComma):
+          discard p.advance()
+          continue
+        break
+      discard p.expect(tkColon, ":")
+      let ftyp = p.parseTypeExpr()
+      for nm in names:
+        var f = newNode(nkFieldDecl, nm.line, nm.col)
+        f.declFieldName = nm.name
+        f.declFieldExported = nm.exported
+        f.declFieldType = ftyp
+        fields.add f
+      if p.cur.kind notin {tkNewline, tkDedent, tkEof}:
+        p.failTok("E-PARSE", "ожидался конец строки с полем")
+      p.skipNewlines()
+    discard p.expect(tkDedent, "конец полей object")
   result = newNode(nkTypeDecl, nt.line, nt.col)
   result.declName = name
   result.exportedDecl = exported
   result.declPragmas = pragmas
+  result.typeFields = fields
 
 proc parseTypeSection(p: var Parser): seq[AstNode] =
   discard p.advance() # type
@@ -313,6 +348,10 @@ proc parseAtom(p: var Parser): AstNode =
     discard p.advance()
     result = newNode(nkIntLit, t.line, t.col)
     result.intVal = int64(parseBiggestInt(t.text))
+  of tkCharLit:
+    discard p.advance()
+    result = newNode(nkCharLit, t.line, t.col)
+    result.charVal = parseInt(t.text)
   of tkStringLit:
     discard p.advance()
     result = newNode(nkStrLit, t.line, t.col)
@@ -366,11 +405,20 @@ proc parsePostfix(p: var Parser): AstNode =
       var args: seq[AstNode]
       if not p.at(tkRParen):
         while true:
-          # именованные аргументы не поддерживаются
-          if p.at(tkIdent) and p.peek(1).kind == tkOperator and
-             p.peek(1).text == "=":
-            p.unsupported("именованный аргумент", "v0.2")
-          args.add p.parseExpr()
+          if p.at(tkIdent) and p.peek(1).kind == tkColon:
+            let nt = p.cur
+            discard p.advance()
+            discard p.advance()
+            let v = p.parseExpr()
+            var nf = newNode(nkNamedField, nt.line, nt.col)
+            nf.namedName = nt.text
+            nf.namedValue = v
+            args.add nf
+          else:
+            if p.at(tkIdent) and p.peek(1).kind == tkOperator and
+               p.peek(1).text == "=":
+              p.unsupported("именованный аргумент '='", "v0.3")
+            args.add p.parseExpr()
           if p.at(tkComma):
             discard p.advance()
             continue
@@ -467,6 +515,17 @@ proc parseOr(p: var Parser): AstNode =
 proc parseExpr(p: var Parser): AstNode =
   result = p.parseOr()
 
+proc parseExprOrAssign(p: var Parser): AstNode =
+  result = p.parseExpr()
+  if p.atOp("="):
+    let eq = p.cur
+    discard p.advance()
+    let rhs = p.parseExpr()
+    var n = newNode(nkAssign, eq.line, eq.col)
+    n.lhs = result
+    n.rhs = rhs
+    result = n
+
 proc parseStmt(p: var Parser): AstNode =
   let t = p.cur
   case t.kind
@@ -516,11 +575,11 @@ proc parseStmt(p: var Parser): AstNode =
                 "объявления внутри процедуры не поддерживаются в v0.1 (v0.2)")
     else:
       p.unsupported("оператор '" & t.text & "'", versionFor(t.kw))
-  of tkIdent, tkIntLit, tkStringLit, tkLParen:
-    result = p.parseExpr()
+  of tkIdent, tkIntLit, tkStringLit, tkCharLit, tkLParen:
+    result = p.parseExprOrAssign()
   of tkOperator:
     if t.text == "-" or t.text == "+":
-      result = p.parseExpr()
+      result = p.parseExprOrAssign()
     else:
       p.failTok("E-PARSE", "неожиданный оператор '" & t.text & "'")
   else:

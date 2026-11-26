@@ -14,8 +14,8 @@ type
 
   TokenKind* = enum
     tkEof, tkNewline, tkIndent, tkDedent, tkIdent, tkKeyword, tkIntLit,
-    tkStringLit, tkOperator, tkLParen, tkRParen, tkLBracket, tkRBracket,
-    tkComma, tkColon, tkDot, tkStar, tkPragmaOpen, tkPragmaClose
+    tkStringLit, tkCharLit, tkOperator, tkLParen, tkRParen, tkLBracket,
+    tkRBracket, tkComma, tkColon, tkDot, tkStar, tkPragmaOpen, tkPragmaClose
 
   Token* = object
     kind*: TokenKind

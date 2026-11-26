@@ -3,7 +3,7 @@
 ## Колонки считаются в байтах, 1-based. Внутри `(`/`[`/`{.` переносы строк
 ## не порождают tkNewline и отступы игнорируются (README §2.1).
 
-import std/strutils
+import std/[strutils, unicode]
 import diag, token
 
 type
@@ -95,6 +95,55 @@ proc addRune(l: var Lexer; s: var string; cp: int) =
     s.add chr(0x80 or ((cp shr 12) and 0x3F))
     s.add chr(0x80 or ((cp shr 6) and 0x3F))
     s.add chr(0x80 or (cp and 0x3F))
+
+proc scanChar(l: var Lexer) =
+  let sl = l.line
+  let sc = l.col
+  l.bump() # '
+  if l.i >= l.src.len or l.src[l.i] in {'\n', '\r'}:
+    l.failAt("E-LEX-CHAR", "незакрытый char-литерал")
+  var v = 0
+  if l.src[l.i] == '\\':
+    l.bump()
+    if l.i >= l.src.len:
+      l.failAt("E-LEX-CHAR", "незакрытый escape в char-литерале")
+    let e = l.src[l.i]
+    case e
+    of 'n': v = 10; l.bump()
+    of 't': v = 9; l.bump()
+    of 'r': v = 13; l.bump()
+    of '0': v = 0; l.bump()
+    of '\\': v = 92; l.bump()
+    of '\'': v = 39; l.bump()
+    of 'x':
+      l.bump()
+      if l.i + 1 >= l.src.len:
+        l.failAt("E-LEX-ESCAPE", "\\xNN: нужно две шестнадцатеричные цифры")
+      let h1 = hexVal(l.src[l.i])
+      let h2 = hexVal(l.src[l.i + 1])
+      if h1 < 0 or h2 < 0:
+        l.failAt("E-LEX-ESCAPE", "\\xNN: некорректная цифра")
+      v = h1 * 16 + h2
+      l.bumpN(2)
+    of 'u':
+      l.failAt("E-LEX-ESCAPE",
+               "char — байт: \\u{...} в char-литерале запрещён",
+               "используйте строку или Rune(runeAt(...))")
+    else:
+      l.failAt("E-LEX-ESCAPE", "неизвестный escape в char-литерале: \\" & $e)
+  else:
+    if ord(l.src[l.i]) >= 128:
+      l.failAt("E-LEX-CHAR",
+               "char — байт: не-ASCII символ в char-литерале запрещён",
+               "используйте строку или Rune/runeAt")
+    if l.src[l.i] == '\'':
+      l.failAt("E-LEX-CHAR", "пустой char-литерал")
+    v = ord(l.src[l.i])
+    l.bump()
+  if l.i >= l.src.len or l.src[l.i] != '\'':
+    l.failAt("E-LEX-CHAR", "ожидалась закрывающая кавычка char-литерала")
+  l.bump()
+  l.addTokAt(tkCharLit, $v, sl, sc)
 
 proc scanString(l: var Lexer) =
   let sl = l.line
@@ -211,6 +260,10 @@ proc scanIdent(l: var Lexer) =
   while l.i < l.src.len and isIdentChar(l.src[l.i]):
     l.bump()
   let s = l.src[start ..< l.i]
+  if s == "b" and l.i < l.src.len and l.src[l.i] == '"':
+    # b"..." — байтовая строка: тот же разбор escape, тип string
+    l.scanString()
+    return
   if s.len == 1 and s[0] == 'r' and l.i < l.src.len and l.src[l.i] == '"':
     l.failAt("E-LEX-STRING", "raw-строки (r\"...\") будут в v0.2")
   let kw = keywordOf(s)
@@ -276,6 +329,8 @@ proc scanToken(l: var Lexer) =
     return
   of '"':
     l.scanString()
+  of '\'':
+    l.scanChar()
   of '0'..'9':
     l.scanNumber()
   of 'a'..'z', 'A'..'Z', '_':
@@ -357,6 +412,19 @@ proc skipToCode(l: var Lexer) =
     return
 
 proc lex*(src, path: string): seq[Token] =
+  let bad = validateUtf8(src)
+  if bad >= 0:
+    var line = 1
+    var col = 1
+    for k in 0 ..< bad:
+      if src[k] == '\n':
+        inc line
+        col = 1
+      else:
+        inc col
+    fail("E-LEX-UTF8", path, line, col,
+         "исходник не является валидным UTF-8",
+         "файл должен быть в UTF-8; байт " & $bad & " нарушает кодировку")
   var l = Lexer(src: src, path: path, line: 1, col: 1,
                 indents: @[0], atLineStart: true)
   while l.i < l.src.len:

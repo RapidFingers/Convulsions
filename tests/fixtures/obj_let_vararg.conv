@@ -1,0 +1,10 @@
+{.profile: kernel.}
+type P = object
+  x: int
+
+proc bump(p: var P): void =
+  p.x = p.x + 1
+
+proc main(): !void =
+  let p = P(x: 1)
+  bump(p)
