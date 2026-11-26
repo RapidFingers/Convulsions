@@ -1,0 +1,12 @@
+{.profile: kernel.}
+import core/concurrency
+import core/io
+
+proc id[T](x: T): !T =
+  return x
+
+proc main(): !void =
+  let t = spawn id(5)
+  let v = try await t
+  assert(v == 5)
+  try println("fiber-generic-ok")

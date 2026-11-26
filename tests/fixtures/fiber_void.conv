@@ -1,0 +1,11 @@
+{.profile: kernel.}
+import core/concurrency
+import core/io
+
+proc note(): !void =
+  try println("task-note")
+
+proc main(): !void =
+  let t = spawn note()
+  try await t
+  try println("fiber-void-ok")

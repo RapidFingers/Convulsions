@@ -1,0 +1,6 @@
+{.profile: kernel.}
+import core/concurrency
+
+proc main(): !void =
+  let t = spawn 1
+  discard t

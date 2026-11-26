@@ -1,0 +1,7 @@
+{.profile: kernel.}
+import core/concurrency
+
+proc main(): !void =
+  let x = 1
+  let y = try await x
+  discard y

@@ -67,7 +67,7 @@ proc skipNewlines(p: var Parser) =
 
 proc unsupported(p: Parser; what, version: string) {.noreturn.} =
   p.failTok("E-UNSUPPORTED",
-            what & " не поддерживается в v0.8 (будет в " & version & ")",
+            what & " не поддерживается в v0.9 (будет в " & version & ")",
             "см. README и docs/MVP.md")
 
 proc versionFor(kw: Keyword): string =
@@ -429,6 +429,16 @@ proc parseAtom(p: var Parser): AstNode =
       result = newNode(nkUnary, t.line, t.col)
       result.op = "not"
       result.a = inner
+    of kwSpawn:
+      discard p.advance()
+      let call = p.parsePostfix()
+      result = newNode(nkSpawn, t.line, t.col)
+      result.spawnCall = call
+    of kwAwait:
+      discard p.advance()
+      let inner = p.parseUnary()
+      result = newNode(nkAwait, t.line, t.col)
+      result.awaitTask = inner
     of kwTrue, kwFalse:
       p.unsupported("bool-литерал", "v0.2")
     else:
@@ -529,7 +539,7 @@ proc parsePostfix(p: var Parser): AstNode =
 
 proc parseMul(p: var Parser): AstNode =
   result = p.parsePostfix()
-  while p.atOp("*") or p.atOp("/") or p.atOp("%"):
+  while p.atOp("*") or p.at(tkStar) or p.atOp("/") or p.atOp("%"):
     let t = p.cur
     discard p.advance()
     let rhs = p.parsePostfix()

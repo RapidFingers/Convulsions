@@ -28,6 +28,7 @@ enum {
   CVN_ERR_IO         = 6,
   CVN_ERR_EOF        = 7,
   CVN_ERR_CANCELLED  = 8,
+  CVN_ERR_TASK       = 9,
   CVN_ERR_CUSTOM     = 0x1000
 };
 
@@ -144,6 +145,25 @@ void              cvn_mem_fill(void *p, uint8_t v, int64_t n);
 void              cvn_mem_copy(void *dst, void *src, int64_t n);
 uint8_t           cvn_mem_byte(void *p, int64_t i);
 void              cvn_mem_set_byte(void *p, int64_t i, uint8_t v);
+
+/* --- Fiber executor: задачи, пул воркеров, event loop ------------------ */
+
+typedef struct cvn_task cvn_task;
+typedef void (*cvn_task_fn)(void *env);
+typedef cvn_error (*cvn_main_fn)(void);
+
+enum { CVN_IO_READ = 1, CVN_IO_WRITE = 2, CVN_IO_ERR = 4 };
+
+cvn_task *cvn_task_spawn(cvn_task_fn fn, const void *env,
+                         int64_t env_size, int64_t result_size);
+void      cvn_task_finish_current(const void *result, int64_t result_size);
+void     *cvn_task_await(cvn_task *t);
+void      cvn_sleep_ms(int64_t ms);
+int       cvn_worker_id(void);
+cvn_error cvn_error_make(int32_t code);
+int       cvn_task_wait_fd(int fd, uint32_t events);
+
+cvn_error cvn_exec_run(cvn_main_fn fn, int workers, int stack_kb);
 
 cvn_result_string cvn_str_concat(cvn_allocator a, cvn_string x, cvn_string y);
 void              cvn_str_deinit(cvn_string *s);

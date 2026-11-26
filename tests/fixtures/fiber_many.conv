@@ -1,0 +1,23 @@
+{.profile: kernel.}
+import core/concurrency
+import core/io
+
+proc work(x: int): !int =
+  sleep(x)
+  return x
+
+proc main(): !void =
+  let a = spawn work(10)
+  let b = spawn work(20)
+  let c = spawn work(30)
+  let d = spawn work(40)
+  let ra = try await a
+  let rb = try await b
+  let rc = try await c
+  let rd = try await d
+  assert(ra == 10)
+  assert(rb == 20)
+  assert(rc == 30)
+  assert(rd == 40)
+  assert(ra + rb + rc + rd == 100)
+  try println("fiber-many-ok")

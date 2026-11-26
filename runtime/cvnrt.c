@@ -26,6 +26,10 @@ static cvn_error make_error(int32_t code, uintptr_t payload) {
   return e;
 }
 
+cvn_error cvn_error_make(int32_t code) {
+  return make_error(code, 0);
+}
+
 static cvn_result_string error_result(cvn_error e) {
   cvn_result_string r;
   memset(&r, 0, sizeof r);
@@ -317,6 +321,7 @@ const char *cvn_error_message(int32_t code) {
     case CVN_ERR_IO: return "i/o error";
     case CVN_ERR_EOF: return "end of file";
     case CVN_ERR_CANCELLED: return "cancelled";
+    case CVN_ERR_TASK: return "task failed";
     default: return "error";
   }
 }

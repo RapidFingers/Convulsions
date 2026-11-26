@@ -15,6 +15,8 @@ type
     dumpAst*: bool
     dumpHir*: bool
     keepTemp*: bool
+    workers*: int
+    stackKb*: int
 
 proc defaultSearchPaths*(): seq[string] =
   let app = getAppDir()

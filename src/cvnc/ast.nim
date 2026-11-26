@@ -9,7 +9,7 @@ type
     nkBlock, nkLet, nkVar, nkDefer, nkReturn, nkDiscard, nkCall, nkField,
     nkIdent, nkIntLit, nkStrLit, nkCharLit, nkUnary, nkBinary, nkTry,
     nkTypeName, nkPtrType, nkResultType, nkFieldDecl, nkNamedField, nkAssign,
-    nkDeref, nkTypeApply
+    nkDeref, nkTypeApply, nkSpawn, nkAwait
 
   AstNode* = ref object
     line*: int
@@ -95,6 +95,10 @@ type
       rhs*: AstNode
     of nkDeref:
       derefObj*: AstNode
+    of nkSpawn:
+      spawnCall*: AstNode
+    of nkAwait:
+      awaitTask*: AstNode
 
 proc newNode*(kind: NodeKind; line, col: int): AstNode =
   AstNode(kind: kind, line: line, col: col)
@@ -169,6 +173,10 @@ proc dumpAst*(n: AstNode; indent = 0): string =
     result.add dumpAst(n.rhs, indent + 1)
   of nkDeref:
     result.add dumpAst(n.derefObj, indent + 1)
+  of nkSpawn:
+    result.add dumpAst(n.spawnCall, indent + 1)
+  of nkAwait:
+    result.add dumpAst(n.awaitTask, indent + 1)
   of nkTypeApply:
     for a in n.appliedArgs:
       result.add dumpAst(a, indent + 1)
@@ -261,3 +269,7 @@ proc cloneAst*(n: AstNode): AstNode =
     result.rhs = cloneAst(n.rhs)
   of nkDeref:
     result.derefObj = cloneAst(n.derefObj)
+  of nkSpawn:
+    result.spawnCall = cloneAst(n.spawnCall)
+  of nkAwait:
+    result.awaitTask = cloneAst(n.awaitTask)

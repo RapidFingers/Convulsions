@@ -1,0 +1,10 @@
+{.profile: kernel.}
+import core/concurrency
+
+proc bump(x: var int): void =
+  x = x + 1
+
+proc main(): !void =
+  var n = 1
+  let t = spawn bump(n)
+  discard t

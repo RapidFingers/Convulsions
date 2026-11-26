@@ -231,6 +231,25 @@ block:
   check "cvn_io_println" in csrc, "cgen: вызов println"
   check "cvn_str_deinit" in csrc, "cgen: deinit"
   check "int main(void)" in csrc, "cgen: wrapper main"
+  check "cvn_exec_run" notin csrc, "cgen: hello без executor"
+
+block:
+  let entry = root / "examples" / "fibers.conv"
+  let opts = BuildOptions(entry: entry, profile: "kernel",
+                          searchPaths: @[stdlib], runtimePath: runtime)
+  let mods = loadProgram(entry, opts)
+  let prog = analyze(mods, opts)
+  let hirs = lowerProgram(prog)
+  var hasSpawn = false
+  for hp in hirs:
+    for ins in hp.instrs:
+      if ins.op == hiSpawn:
+        hasSpawn = true
+  check hasSpawn, "lower: spawn понижен"
+  let csrc = emitC(prog, hirs)
+  check "cvn_exec_run" in csrc, "cgen: исполнитель в main"
+  check "cvn_spawn_entry_" in csrc, "cgen: spawn-thunk"
+  check "cvn_task_await" in csrc, "cgen: await"
 
 # ------------------------------------------------------------------- e2e: hello
 let helloExe = tmp / "hello"
@@ -334,6 +353,12 @@ let negatives = [
   ("gen_private_field.conv", "E-PRIVATE"),
   ("gen_index.conv", "E-UNSUPPORTED"),
   ("gen_depth.conv", "E-MONO-DEPTH"),
+  ("fiber_spawn_noncall.conv", "E-SPAWN-CALL"),
+  ("fiber_spawn_ctor.conv", "E-SPAWN-CALL"),
+  ("fiber_spawn_builtin.conv", "E-SPAWN-CALL"),
+  ("fiber_spawn_plain.conv", "E-SPAWN-RET"),
+  ("fiber_spawn_var.conv", "E-SPAWN-VAR"),
+  ("fiber_await_nontask.conv", "E-TYPE"),
 ]
 
 for item in negatives:
@@ -386,6 +411,25 @@ block:
     let r = run(ctest, @[])
     checkEq r.code, 0, "c-alloc: запуск (" & r.output & ")"
     check "c-alloc-ok" in r.output, "c-alloc: маркер"
+
+# ---------------------------------------------------------- C-юниты fiber
+block:
+  let ctest = tmp / ("test_fiber" & ExeSuffix)
+  var args = @["-std=c11", "-Wall", "-Wextra", "-Werror",
+               "-I", runtime, "-o", ctest,
+               root / "tests" / "rt" / "test_fiber.c",
+               runtime / "cvnrt.c", runtime / "cvnrt_alloc.c",
+               runtime / "cvnrt_fiber.c"]
+  when defined(windows):
+    args.add "-lws2_32"
+  else:
+    args.add "-pthread"
+  let b = run("gcc", args)
+  checkEq b.code, 0, "c-fiber: сборка (" & b.output & ")"
+  if b.code == 0:
+    let r = run(ctest, @[])
+    checkEq r.code, 0, "c-fiber: запуск (" & r.output & ")"
+    check "c-fiber-ok" in r.output, "c-fiber: маркер"
 
 # ------------------------------------------------------------------ e2e: UTF-8
 block:
@@ -634,11 +678,64 @@ block:
     checkEq readFile(c1 / "main.c"), readFile(c2 / "main.c"),
             "generics emit-c: детерминизм"
 
+# ------------------------------------------------------------------ e2e: fiber
+block:
+  let exe = tmp / "fibers"
+  let b = run(cvn, @["build", root / "examples" / "fibers.conv",
+                     "-o", exe,
+                     "--path=" & stdlib, "--runtime-path=" & runtime])
+  checkEq b.code, 0, "fiber: пример собирается (" & b.output & ")"
+  if b.code == 0:
+    var e = exe
+    if not fileExists(e) and fileExists(exe & ExeSuffix):
+      e = exe & ExeSuffix
+    let r = run(e, @[])
+    checkEq r.code, 0, "fiber: exit code"
+    checkEq r.output, "fibers ok\n", "fiber: stdout"
+
+block:
+  let exe = tmp / "fibers1"
+  let b = run(cvn, @["build", root / "examples" / "fibers.conv",
+                     "-o", exe, "--workers=1",
+                     "--path=" & stdlib, "--runtime-path=" & runtime])
+  checkEq b.code, 0, "fiber workers=1: собирается (" & b.output & ")"
+  if b.code == 0:
+    var e = exe
+    if not fileExists(e) and fileExists(exe & ExeSuffix):
+      e = exe & ExeSuffix
+    let r = run(e, @[])
+    checkEq r.code, 0, "fiber workers=1: exit code"
+    checkEq r.output, "fibers ok\n", "fiber workers=1: stdout"
+
+let fiberPositives = [
+  ("fiber_void.conv", "fiber_void", "task-note\nfiber-void-ok\n"),
+  ("fiber_many.conv", "fiber_many", "fiber-many-ok\n"),
+  ("fiber_generic.conv", "fiber_generic", "fiber-generic-ok\n"),
+  ("fiber_external.conv", "fiber_external", "from-task\nfiber-external-ok\n"),
+  ("fiber_object.conv", "fiber_object", "fiber-object-ok\n"),
+]
+
+for item in fiberPositives:
+  let b = buildFixture(item[0], item[1])
+  checkEq b.code, 0, item[0] & ": собирается (" & b.output & ")"
+  if b.code == 0:
+    let r = run(b.exe, @[])
+    checkEq r.code, 0, item[0] & ": exit code"
+    checkEq r.output, item[2], item[0] & ": stdout"
+
+block:
+  let b = buildFixture("fiber_error.conv", "fiber_error")
+  checkEq b.code, 0, "fiber_error: собирается (" & b.output & ")"
+  if b.code == 0:
+    let r = run(b.exe, @[])
+    checkEq r.code, 1, "fiber_error: exit code"
+    check "error[3]" in r.output, "fiber_error: ошибка задачи"
+
 # ---------------------------------------------------------------- e2e: version
 block:
   let r = run(cvn, @["version"])
   checkEq r.code, 0, "version: exit code"
-  check "0.8.0" in r.output, "version: номер версии"
+  check "0.9.0" in r.output, "version: номер версии"
 
 if failures > 0:
   echo "\n", failures, " проверок провалено"

@@ -1,0 +1,8 @@
+{.profile: kernel.}
+import core/concurrency
+import core/io
+
+proc main(): !void =
+  let t = spawn println("from-task")
+  try await t
+  try println("fiber-external-ok")

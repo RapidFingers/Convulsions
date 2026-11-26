@@ -1,0 +1,14 @@
+{.profile: kernel.}
+import core/concurrency
+import core/string
+import core/io
+
+proc bad(): !int =
+  let r = try rune(0xD800)
+  return int(r)
+
+proc main(): !void =
+  let t = spawn bad()
+  let v = try await t
+  discard v
+  try println("fiber-error-ok")

@@ -1,0 +1,22 @@
+{.profile: kernel.}
+import core/concurrency
+import core/io
+
+type
+  Node* = object
+    id*: int
+
+proc makeNode(x: int): !Node =
+  return Node(id: x)
+
+proc readNode(n: Node): !int =
+  return n.id
+
+proc main(): !void =
+  let t = spawn makeNode(5)
+  let n = try await t
+  assert(n.id == 5)
+  let u = spawn readNode(Node(id: 7))
+  let v = try await u
+  assert(v == 7)
+  try println("fiber-object-ok")

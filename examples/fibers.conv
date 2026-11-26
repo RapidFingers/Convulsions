@@ -1,0 +1,19 @@
+{.profile: kernel.}
+import core/concurrency
+import core/io
+
+proc work(x: int): !int =
+  sleep(20)
+  return x * 2
+
+proc main(): !void =
+  let a = spawn work(1)
+  let b = spawn work(2)
+  let c = spawn work(3)
+  let ra = try await a
+  let rb = try await b
+  let rc = try await c
+  assert(ra == 2)
+  assert(rb == 4)
+  assert(rc == 6)
+  try println("fibers ok")

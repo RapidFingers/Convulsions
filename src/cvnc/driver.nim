@@ -74,7 +74,8 @@ proc build*(opts: BuildOptions): string =
 
     let runtimeDir = absolutePath(opts.runtimePath)
     if not fileExists(runtimeDir / "cvnrt.c") or
-       not fileExists(runtimeDir / "cvnrt_alloc.c"):
+       not fileExists(runtimeDir / "cvnrt_alloc.c") or
+       not fileExists(runtimeDir / "cvnrt_fiber.c"):
       fail("E-IO", opts.entry, 0, 0,
            "рантайм не найден: " & runtimeDir,
            "укажите --runtime-path=<dir>")
@@ -86,7 +87,11 @@ proc build*(opts: BuildOptions): string =
         if f.len > 0:
           args.add f
     args.add @["-o", outAbs, absolutePath(cfile), runtimeDir / "cvnrt.c",
-               runtimeDir / "cvnrt_alloc.c"]
+               runtimeDir / "cvnrt_alloc.c", runtimeDir / "cvnrt_fiber.c"]
+    when defined(windows):
+      args.add "-lws2_32"
+    else:
+      args.add "-pthread"
 
     let r = runCC(cc, args)
     if r.code != 0:

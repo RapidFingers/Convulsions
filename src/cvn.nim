@@ -3,7 +3,7 @@
 import std/[os, strutils]
 import cvnc/[diag, options, driver]
 
-const Version = "0.8.0"
+const Version = "0.9.0"
 
 proc usage() =
   echo """cvn """ & Version & """ — Convulsions compiler (kernel MVP)
@@ -11,6 +11,7 @@ proc usage() =
 Usage:
   cvn build <entry.conv> [-o <bin>] [--emit-c=DIR] [--cc=CMD]
                          [--cflags=FLAGS] [--path=DIR{;DIR}]
+    [--workers=N] [--stack-size=KB]
                          [--runtime-path=DIR] [--profile=kernel]
                          [--dump-ast] [--dump-hir] [--keep-temp]
   cvn run <entry.conv> [-- <args>]
@@ -56,6 +57,10 @@ proc parseCli(argv: seq[string]): tuple[cmd: string, opts: BuildOptions,
       result.opts.cflags = a["--cflags=".len .. ^1]
     elif a == "--cflags":
       result.opts.cflags = needValue(argv, i, a)
+    elif a.startsWith("--workers="):
+      result.opts.workers = parseInt(a["--workers=".len .. ^1])
+    elif a.startsWith("--stack-size="):
+      result.opts.stackKb = parseInt(a["--stack-size=".len .. ^1])
     elif a.startsWith("--path="):
       result.opts.searchPaths = splitPaths(a["--path=".len .. ^1])
     elif a == "--path":

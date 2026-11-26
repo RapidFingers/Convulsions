@@ -1,0 +1,4 @@
+{.profile: kernel.}
+{.header: "<cvnrt.h>".}
+
+proc sleep*(ms: int): void {.importc: "cvn_sleep_ms", cdecl.}

@@ -1,9 +1,10 @@
-# Convulsions MVP (v0.8): kernel, UTF-8, объекты, аллокаторы, generics
+# Convulsions MVP (v0.9): kernel, UTF-8, объекты, аллокаторы, generics, fibers
 
 Минимальный компилятор языка Convulsions: профиль `kernel`, бэкенд `native`
 (HIR → C11 → gcc). Реализует hello world, UTF-8-модель `string` (README §6.7),
 value-объекты и их аллокацию в куче (§6.2, §3.6), аллокаторы (§3.2–3.8),
-отчёт об утечках с типом и `file:line`, мономорфизируемые дженерики (§6.3).
+отчёт об утечках с типом и `file:line`, мономорфизируемые дженерики (§6.3)
+и `spawn`/`await` под исполнителем `fiber` с пулом воркеров и event loop (§4).
 Спецификация языка — [../README.md](../README.md).
 
 ## Сборка и запуск
@@ -22,6 +23,9 @@ $ bin/cvn run examples/leak_debug.conv
 leak-debug ok
 $ bin/cvn run examples/generics.conv
 generics ok
+$ bin/cvn run examples/fibers.conv
+fibers ok
+$ bin/cvn build examples/fibers.conv --workers=1 -o build/fibers1
 ```
 
 `stdlib` и `runtime` ищутся рядом с бинарником (`bin/../stdlib`,
@@ -38,6 +42,7 @@ generics ok
 | Аллокация объектов | `a.create(T)`, `a.create(T, value)`, `a.destroy(p)`, `p.x` через `ptr`, `p[]` |
 | Отладка утечек | тип и `file:line` для `create`, `debugReport`, автоотчёт на exit, `CVN_DEBUG_FAIL_ON_LEAK=1` |
 | Дженерики | `[T]` у типов/процедур, `Box[int]`, вывод и явная конкретизация, вложенность, `create(Box[int])` |
+| Fibers | `spawn f(args)`, `await t`, `sleep(ms)`, пул воркеров, event loop, `--workers`, `--stack-size` |
 | Аллокаторы | `null/c/page/fixed/arena/stack/task`, `initDebug`, байтовые `alloc/free/realloc`, `memFill/memByte/...` |
 | Выражения | имена, вызовы, UFCS, `try`, `-`, `not`, арифметика, сравнения скаляров, `s.len`, `sizeof/alignof/offsetof`, `T(x)` |
 | Операторы | `let`, `var`, `return`, `discard`, `defer:`, `try`, `assert(cond[, "msg"])`, присваивание `lhs = expr` |
@@ -212,6 +217,41 @@ assert(Pair[int](first: 1, second: 2).first == 1)
 частичного вывода, generic-процедуры как значения; `from m import *` не нужен —
 есть `import m`.
 
+## Fibers, воркеры и event loop
+
+```conv
+import core/concurrency
+import core/io
+
+proc work(x: int): !int =
+  sleep(20)
+  return x * 2
+
+proc main(): !void =
+  let a = spawn work(1)
+  let b = spawn work(2)
+  let ra = try await a
+  let rb = try await b
+  assert(ra == 2)
+  assert(rb == 4)
+  try println("fibers ok")
+```
+
+`spawn f(args)` создаёт задачу `Task[U]` для `f: !U`; аргументы копируются в
+env задачи. Готовые задачи берут воркеры из общей очереди (автоматическое
+распределение по потокам); `await` паркует текущую фибру и возобновляет её при
+завершении задачи. `sleep(ms)` паркует фибру через таймер event loop; event loop
+также умеет будить задачи по готовности fd (`cvn_task_wait_fd`, внутренний API
+для будущих сокетов). `--workers=N` задаёт число потоков (0 = auto),
+`--stack-size=KB` — стек фибры (по умолчанию 256). `--workers=1` — один поток.
+
+Ограничения MVP: только прямой вызов процедуры и только её аргументы (нет
+замыканий/захвата локальных), задачи с `var`-параметрами запрещены, нет
+preemption, `thread`-исполнителя, каналов/мьютексов/отмены и per-task арен;
+`string`/объекты в аргументах копируются поверхностно; записи задач живут до
+завершения программы. Программы без `spawn`/`await` не запускают потоки.
+Сетевые сокеты — следующий милстоун поверх event loop.
+
 ## UTF-8
 
 `len` — байты, `s[i]` — байт, NUL в конце; `validate` — строгая проверка;
@@ -248,6 +288,9 @@ runtime/cvnrt_alloc.c   аллокаторы, byte-API, debug, память
   не символизацию и не heap-профилирование; строки/`concat` не тегируются.
 - Дженерики: мономорфизация без constraints/`static`/частичного вывода;
   generic-процедура не является значением; перегрузки по типам нет.
+- Fibers: нет замыканий/захвата, preemption, `thread`-исполнителя, каналов,
+  отмены и per-task арен; сокеты — следующий милстоун; задачa не мигрирует
+  между воркерами; записи задач освобождаются только на shutdown.
 - `runes`/`for`, срезы, `union`/`enum`, `addr`/`p[i]`, `nil`, `{.packed.}`,
   сравнение объектов и строк, debug-аллокатор по умолчанию не реализованы.
 
@@ -264,6 +307,8 @@ $ nimble test
   (`examples/objects_alloc.conv`), отладка утечек
   (`examples/leak_debug.conv`, `obj_leak_auto.conv`), `examples/allocators.conv`,
   import-all (`import m`), дженерики (`examples/generics.conv`,
-  `generics_*.conv`), `--emit-c` (детерминизм);
+  `generics_*.conv`), fibers (`examples/fibers.conv`, `fiber_*.conv`),
+  `--emit-c` (детерминизм);
+- C-fiber: барьер автораспределения, вложенный await, таймеры, fd-readiness.
 - негативы: ошибки компилятора, OOM fixed, bad align, null allocator,
   stack LIFO, double free, неверный размер, redzone, утечка.

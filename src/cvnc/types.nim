@@ -5,7 +5,7 @@ import std/strutils
 type
   TypeKind* = enum
     tyVoid, tyInt, tyBool, tyChar, tyString, tyRune, tyPointer, tyPtr,
-    tyObject, tyProc, tyResult, tyError, tyErrorCode, tyUnknown
+    tyObject, tyProc, tyResult, tyTask, tyError, tyErrorCode, tyUnknown
 
   Field* = object
     name*: string
@@ -57,6 +57,7 @@ proc typeKey*(t: Type): string =
   of tyPointer: "pointer"
   of tyPtr: "ptr_" & typeKey(t.elem)
   of tyResult: "res_" & typeKey(t.elem)
+  of tyTask: "task_" & typeKey(t.elem)
   of tyObject: t.cname
   of tyProc:
     var parts: seq[string]
@@ -89,6 +90,8 @@ proc sameType*(a, b: Type): bool =
     return false
   case a.kind
   of tyPtr, tyResult:
+    result = sameType(a.elem, b.elem)
+  of tyTask:
     result = sameType(a.elem, b.elem)
   of tyProc:
     if a.params.len != b.params.len:
@@ -124,6 +127,7 @@ proc typeName*(t: Type): string =
     s.add "): " & typeName(t.ret)
     s
   of tyResult: "!" & typeName(t.elem)
+  of tyTask: "Task[" & typeName(t.elem) & "]"
   of tyError: "error"
   of tyErrorCode: "ErrorCode"
   of tyUnknown: "<unknown>"

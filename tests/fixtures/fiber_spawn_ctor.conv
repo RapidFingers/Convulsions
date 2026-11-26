@@ -1,0 +1,10 @@
+{.profile: kernel.}
+import core/concurrency
+
+type
+  Node* = object
+    id*: int
+
+proc main(): !void =
+  let t = spawn Node(id: 1)
+  discard t

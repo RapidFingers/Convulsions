@@ -8,7 +8,7 @@ type
     hiExtractOk, hiMov, hiBinary, hiUnary, hiRet, hiRetVal, hiRetErrFrom,
     hiConv, hiStrLen, hiAssert, hiPathGet, hiPathSet, hiPathAddr,
     hiPathDeinit, hiLoadPtr, hiStorePtr, hiObjInit, hiObjCreate,
-    hiObjDestroy, hiSizeof, hiAlignof, hiOffsetof, hiNop
+    hiObjDestroy, hiSizeof, hiAlignof, hiOffsetof, hiSpawn, hiAwait, hiNop
 
   HirInstr* = object
     op*: HirOp
@@ -23,6 +23,7 @@ type
     where*: string
     convType*: Type
     typeRef*: Type
+    siteId*: int
     rootPtr*: bool
     path*: seq[string]
     args*: seq[int]
@@ -35,8 +36,8 @@ type
     instrs*: seq[HirInstr]
 
 proc newInstr*(op: HirOp): HirInstr =
-  HirInstr(op: op, dst: -1, a: -1, b: -1, symId: -1, strIdx: -1, label: -1,
-           args: @[])
+  HirInstr(op: op, dst: -1, a: -1, b: -1, symId: -1, strIdx: -1,
+           label: -1, siteId: -1, args: @[])
 
 proc dumpHir*(hp: HirProc): string =
   result = "proc #" & $hp.symId & " slots=" & $hp.slotTypes.len & "\n"

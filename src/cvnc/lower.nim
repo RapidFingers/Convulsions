@@ -1,7 +1,6 @@
 ## Понижение AST -> HIR: try, defer, builtin deinit, литералы.
 
 import std/tables
-import std/algorithm
 import diag, ast, types, symbols, sema, hir
 
 type
@@ -14,6 +13,7 @@ type
     cleanups: seq[seq[seq[HirInstr]]]
     labelSeq: int
     curFile: string
+    spawnSeq: int
 
 proc newSlot(l: Lower; t: Type): int =
   result = l.slots.len
@@ -129,6 +129,28 @@ proc lowerExpr(l: Lower; n: AstNode): int =
     var ins = newInstr(hiLoadPtr)
     ins.dst = result
     ins.a = p
+    l.emit(ins)
+  of nkSpawn:
+    let call = n.spawnCall
+    var argSlots: seq[int]
+    for a in call.args:
+      argSlots.add l.lowerExpr(a)
+    result = l.newSlot(n.typ)
+    var ins = newInstr(hiSpawn)
+    ins.dst = result
+    ins.symId = call.symId
+    ins.args = argSlots
+    ins.typeRef = n.typeRef
+    ins.siteId = l.spawnSeq
+    inc l.spawnSeq
+    l.emit(ins)
+  of nkAwait:
+    let a = l.lowerExpr(n.awaitTask)
+    result = l.newSlot(n.typ)
+    var ins = newInstr(hiAwait)
+    ins.dst = result
+    ins.a = a
+    ins.typeRef = n.typeRef
     l.emit(ins)
   of nkUnary:
     let a = l.lowerExpr(n.a)

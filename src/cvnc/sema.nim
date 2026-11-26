@@ -222,6 +222,16 @@ proc ptrResultType(t: Type): Type =
   r.elem = p
   r
 
+proc taskType(t: Type): Type =
+  let r = newType(tyTask)
+  r.elem = t
+  r
+
+proc resultOfTask(t: Type): Type =
+  let r = newType(tyResult)
+  r.elem = t.elem
+  r
+
 proc typeFromName(s: Sema; n: AstNode; what: string): Type =
   if n.kind == nkTypeApply:
     return s.typeFromNode(n)
@@ -936,6 +946,38 @@ proc analExpr(s: Sema; n: AstNode): Type =
   of nkTypeApply:
     fail("E-GENERIC-VALUE", s.curMod.file, n.line, n.col,
          "generic-тип '" & n.appliedName & "' использован как значение")
+  of nkSpawn:
+    let call = n.spawnCall
+    if call.kind != nkCall:
+      fail("E-SPAWN-CALL", s.curMod.file, n.line, n.col,
+           "spawn принимает только вызов процедуры",
+           "например: spawn f(args)")
+    let rt = s.analExpr(call)
+    if call.symId < 0 or call.symId >= s.prog.syms.len:
+      fail("E-SPAWN-CALL", s.curMod.file, n.line, n.col,
+           "spawn не может вызвать это выражение")
+    let callee = s.prog.syms[call.symId]
+    if callee.kind != skProc:
+      fail("E-SPAWN-CALL", s.curMod.file, n.line, n.col,
+           "spawn принимает только процедуру, не конструктор/builtin")
+    for v in callee.paramVars:
+      if v:
+        fail("E-SPAWN-VAR", s.curMod.file, n.line, n.col,
+             "нельзя spawn-ить процедуру с var-параметром",
+             "аргументы задачи копируются по значению")
+    if rt.kind != tyResult:
+      fail("E-SPAWN-RET", s.curMod.file, n.line, n.col,
+           "spawn требует процедуру, возвращающую !T; получено " &
+           typeName(rt))
+    n.typeRef = rt
+    n.typ = taskType(rt.elem)
+  of nkAwait:
+    let t = s.analExpr(n.awaitTask)
+    if t.kind != tyTask:
+      fail("E-TYPE", s.curMod.file, n.line, n.col,
+           "await ожидает Task[T], получен " & typeName(t))
+    n.typ = resultOfTask(t)
+    n.typeRef = n.typ
   of nkUnary:
     let t = s.analExpr(n.a)
     case n.op
