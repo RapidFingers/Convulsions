@@ -116,6 +116,8 @@ cvn_allocator     cvn_task_allocator(void);
 
 cvn_result_ptr    cvn_alloc_bytes(cvn_allocator a, int64_t n);
 cvn_result_ptr    cvn_alloc_aligned(cvn_allocator a, int64_t n, int64_t align);
+cvn_result_ptr    cvn_alloc_tagged(cvn_allocator a, int64_t n, int64_t align,
+                                   const char *tag, const char *where);
 cvn_result_ptr    cvn_alloc_zeroed(cvn_allocator a, int64_t n);
 cvn_result_ptr    cvn_realloc_bytes(cvn_allocator a, void *p, int64_t oldn,
                                     int64_t newn);

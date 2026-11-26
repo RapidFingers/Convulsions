@@ -109,6 +109,16 @@ static void test_debug(void) {
   cvn_debug_deinit(d);
 }
 
+static void test_tagged(void) {
+  cvn_allocator d = cvn_debug_allocator(cvn_c_allocator());
+  cvn_result_ptr p = cvn_alloc_tagged(d, 16, 8, "TagC", "test_alloc.c:42");
+  assert(p.tag == 0u && p.u.ok != NULL);
+  assert(cvn_debug_report(d) == 1);
+  cvn_free_bytes(d, p.u.ok, 16);
+  assert(cvn_debug_report(d) == 0);
+  cvn_debug_deinit(d);
+}
+
 static void test_helpers(void) {
   char a[8];
   char b[8];
@@ -134,6 +144,7 @@ int main(void) {
   test_arena();
   test_stack();
   test_debug();
+  test_tagged();
   test_helpers();
   printf("c-alloc-ok\n");
   return 0;

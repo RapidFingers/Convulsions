@@ -1,0 +1,26 @@
+{.profile: kernel.}
+from core/mem import cAllocator, initDebug, debugCheck, debugReport, debugDeinit
+from core/io import println
+
+type
+  Node* = object
+    id*: int
+    next*: ptr Node
+
+proc main(): !void =
+  let d = initDebug(cAllocator())
+  defer: debugDeinit(d)
+
+  let keep = try d.create(Node)
+  keep.id = 1
+  let tmp = try d.create(Node, Node(id: 2))
+  d.destroy(tmp)
+
+  assert(debugCheck(d))
+  let leaked = debugReport(d)
+  assert(leaked == 1)
+
+  d.destroy(keep)
+  assert(debugReport(d) == 0)
+
+  try println("leak-debug ok")

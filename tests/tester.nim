@@ -486,11 +486,39 @@ for item in objAllocNegatives:
     checkEq r.code, item[2], item[0] & ": exit code"
     check item[3] in r.output, item[0] & ": ожидался " & item[3]
 
+# -------------------------------------------------------- e2e: отладка утечек
+block:
+  let exe = tmp / "leak_debug"
+  let b = run(cvn, @["build", root / "examples" / "leak_debug.conv",
+                     "-o", exe,
+                     "--path=" & stdlib, "--runtime-path=" & runtime])
+  checkEq b.code, 0, "leak-debug: пример собирается (" & b.output & ")"
+  if b.code == 0:
+    var e = exe
+    if not fileExists(e) and fileExists(exe & ExeSuffix):
+      e = exe & ExeSuffix
+    let r = run(e, @[])
+    checkEq r.code, 0, "leak-debug: exit code"
+    check "leak-debug ok" in r.output, "leak-debug: stdout"
+    check "Node" in r.output, "leak-debug: тип в отчёте"
+    check "leak_debug.conv" in r.output, "leak-debug: место в отчёте"
+    check "leaked 1 block" in r.output, "leak-debug: счётчик"
+
+block:
+  let b = buildFixture("obj_leak_auto.conv", "obj_leak_auto")
+  checkEq b.code, 0, "leak-auto: собирается (" & b.output & ")"
+  if b.code == 0:
+    let r = run(b.exe, @[])
+    checkEq r.code, 0, "leak-auto: exit code"
+    check "leaked 1 block" in r.output, "leak-auto: автоотчёт"
+    check "Node" in r.output, "leak-auto: тип"
+    check "obj_leak_auto.conv" in r.output, "leak-auto: место"
+
 # ---------------------------------------------------------------- e2e: version
 block:
   let r = run(cvn, @["version"])
   checkEq r.code, 0, "version: exit code"
-  check "0.5.0" in r.output, "version: номер версии"
+  check "0.6.0" in r.output, "version: номер версии"
 
 if failures > 0:
   echo "\n", failures, " проверок провалено"

@@ -1,0 +1,12 @@
+{.profile: kernel.}
+from core/mem import cAllocator, initDebug
+
+type
+  Node* = object
+    id*: int
+
+proc main(): !void =
+  let d = initDebug(cAllocator())
+  let p = try d.create(Node)
+  p.id = 1
+  discard p

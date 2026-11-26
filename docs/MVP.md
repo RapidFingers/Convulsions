@@ -1,8 +1,9 @@
-# Convulsions MVP (v0.5): kernel, UTF-8, объекты, аллокаторы
+# Convulsions MVP (v0.6): kernel, UTF-8, объекты, аллокаторы, отладка утечек
 
 Минимальный компилятор языка Convulsions: профиль `kernel`, бэкенд `native`
 (HIR → C11 → gcc). Реализует hello world, UTF-8-модель `string` (README §6.7),
-value-объекты и их аллокацию в куче (§6.2, §3.6), аллокаторы (§3.2–3.8).
+value-объекты и их аллокацию в куче (§6.2, §3.6), аллокаторы (§3.2–3.8)
+и отчёт об утечках с типом и `file:line`.
 Спецификация языка — [../README.md](../README.md).
 
 ## Сборка и запуск
@@ -17,6 +18,8 @@ $ bin/cvn run examples/objects_alloc.conv
 objects-alloc ok
 $ bin/cvn run examples/allocators.conv
 allocators ok
+$ bin/cvn run examples/leak_debug.conv
+leak-debug ok
 ```
 
 `stdlib` и `runtime` ищутся рядом с бинарником (`bin/../stdlib`,
@@ -31,6 +34,7 @@ allocators ok
 | Литералы | целые, строковые `"..."`, байтовые `b"..."`, char `'a'`/`'\xFF'` |
 | Объекты | `T(f: v, ...)`, `T()`, `p.x`, `p.a.b`, `p = q`, копии, вложенность, `ptr`-поля |
 | Аллокация объектов | `a.create(T)`, `a.create(T, value)`, `a.destroy(p)`, `p.x` через `ptr`, `p[]` |
+| Отладка утечек | тип и `file:line` для `create`, `debugReport`, автоотчёт на exit, `CVN_DEBUG_FAIL_ON_LEAK=1` |
 | Аллокаторы | `null/c/page/fixed/arena/stack/task`, `initDebug`, байтовые `alloc/free/realloc`, `memFill/memByte/...` |
 | Выражения | имена, вызовы, UFCS, `try`, `-`, `not`, арифметика, сравнения скаляров, `s.len`, `sizeof/alignof/offsetof`, `T(x)` |
 | Операторы | `let`, `var`, `return`, `discard`, `defer:`, `try`, `assert(cond[, "msg"])`, присваивание `lhs = expr` |
@@ -141,6 +145,32 @@ let v = p[]                                 # копия значения из �
 `p[]` читает/пишет значение цели; `let p` не мешает менять поля через указатель,
 но запрещает `p = q`. `p[i]`, `nil`, `addr`, массивы объектов в куче — позже.
 
+## Отладка утечек
+
+`create` в debug-аллокаторе запоминает тип и место:
+
+```console
+$ bin/cvn run examples/leak_debug.conv
+leak-debug ok
+[debug allocator] leaked 1 block(s), 16 byte(s)
+  #1 Node (16 byte(s)) at .../examples/leak_debug.conv:14 ptr=000001...
+  by type:
+    Node x1, 16 byte(s)
+```
+
+- `debugReport(a)` печатает детали и сводку по типам, возвращает число блоков.
+- `debugCheck(a)` проверяет заголовки и tail-redzone.
+- `debugFailOnLeak(a)` печатает отчёт и завершает процесс с кодом 3.
+- Без `debugDeinit`/освобождения блоков отчёт печатается автоматически на
+  выходе (atexit). `CVN_DEBUG_FAIL_ON_LEAK=1` в окружении делает это exit 3 —
+  удобно для CI.
+- Double free, неверный размер и повреждение redzone сообщают тип и исходное
+  `file:line` из места `create`.
+- Байтовые `allocBytes` попадают в отчёт как `bytes` с местом `?`.
+
+Ограничения: это не stack trace и не heap-профилировщик; строки/`concat`
+не тегируются, пока не появится единый учёт `string`.
+
 ## UTF-8
 
 `len` — байты, `s[i]` — байт, NUL в конце; `validate` — строгая проверка;
@@ -173,6 +203,8 @@ runtime/cvnrt_alloc.c   аллокаторы, byte-API, debug, память
 - Нет классов/методов: аллокаторы и `deinit` — функции/встроенные операции.
 - Нет `seq`/`Slice`/дженериков: байтовый API и `create/destroy` одиночных
   объектов; массивов объектов в куче нет.
+- Отладка утечек даёт тип/`file:line` и автоотчёт, но не stack trace,
+  не символизацию и не heap-профилирование; строки/`concat` не тегируются.
 - `runes`/`for`, срезы, `union`/`enum`, `addr`/`p[i]`, `nil`, `{.packed.}`,
   сравнение объектов и строк, debug-аллокатор по умолчанию не реализованы.
 
@@ -186,7 +218,8 @@ $ nimble test
 - C-юниты: `tests/rt/test_utf.c` (декодер), `tests/rt/test_alloc.c`
   (c/page/fixed/arena/stack/debug, выравнивание, redzone, отчёты);
 - e2e: hello, defer-LIFO, UTF-8, объекты, аллокация объектов
-  (`examples/objects_alloc.conv`), `examples/allocators.conv`,
+  (`examples/objects_alloc.conv`), отладка утечек
+  (`examples/leak_debug.conv`, `obj_leak_auto.conv`), `examples/allocators.conv`,
   `--emit-c` (детерминизм);
 - негативы: ошибки компилятора, OOM fixed, bad align, null allocator,
   stack LIFO, double free, неверный размер, redzone, утечка.

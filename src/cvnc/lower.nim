@@ -203,6 +203,7 @@ proc lowerExpr(l: Lower; n: AstNode): int =
       ins.dst = result
       ins.a = a
       ins.typeRef = n.typeRef
+      ins.where = l.curFile & ":" & $n.line
       if n.args.len > 1:
         ins.b = l.lowerExpr(n.args[1])
       l.emit(ins)

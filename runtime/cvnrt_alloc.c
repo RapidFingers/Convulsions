@@ -2,6 +2,7 @@
 #include "cvnrt.h"
 
 #include <limits.h>
+#include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -31,6 +32,15 @@ static void alloc_fatal(const char *msg) {
   fprintf(stderr, "allocator error: %s\n", msg);
   fflush(stderr);
   exit(3);
+}
+
+static void alloc_fatalf(const char *fmt, ...) {
+  char buf[512];
+  va_list ap;
+  va_start(ap, fmt);
+  vsnprintf(buf, sizeof buf, fmt, ap);
+  va_end(ap);
+  alloc_fatal(buf);
 }
 
 static int is_pow2(int64_t x) { return x > 0 && (x & (x - 1)) == 0; }
@@ -457,13 +467,19 @@ void cvn_stack_deinit(cvn_allocator a) {
 typedef struct dbg_node {
   struct dbg_node *next;
   void *user;
+  const char *tag;
+  const char *where;
+  int64_t size;
 } dbg_node;
 
-typedef struct {
+typedef struct dbg_state_s {
   uint32_t magic;
   cvn_allocator backing;
   dbg_node *live;
   dbg_node *freed;
+  const char *pending_tag;
+  const char *pending_where;
+  struct dbg_state_s *next_global;
 } dbg_state;
 
 typedef struct {
@@ -478,6 +494,11 @@ typedef struct {
 } dbg_hdr;
 
 _Static_assert(sizeof(dbg_hdr) == CVN_DBG_HDR, "debug header size");
+
+static dbg_state *g_dbg_states = NULL;
+static int g_dbg_atexit_installed = 0;
+static void dbg_atexit(void);
+static int64_t dbg_report_state(dbg_state *s);
 
 static dbg_hdr *hdr_of(void *p) {
   return (dbg_hdr *)((char *)p - CVN_DBG_HDR);
@@ -549,8 +570,11 @@ static void *dbg_alloc(void *st, size_t size, size_t align) {
       s->backing.vtable->free(s->backing.state, base, (size_t)total);
       return NULL;
     }
-    node->user = user;
   }
+  node->user = user;
+  node->tag = s->pending_tag != NULL ? s->pending_tag : "bytes";
+  node->where = s->pending_where != NULL ? s->pending_where : "?";
+  node->size = (int64_t)size;
   node->next = s->live;
   s->live = node;
   h->node = node;
@@ -568,15 +592,19 @@ static void dbg_free(void *st, void *p, size_t size) {
     alloc_fatal("debug free with wrong allocator");
   for (cur = s->freed; cur != NULL; cur = cur->next)
     if (cur->user == p)
-      alloc_fatal("double free");
+      alloc_fatalf("double free of %s (%lld byte(s)) allocated at %s",
+                   cur->tag, (long long)cur->size, cur->where);
   h = hdr_of(p);
   if (h->magic != CVN_DBG_MAGIC || h->owner != s)
     alloc_fatal("invalid free");
   if (h->size != (int64_t)size)
-    alloc_fatal("wrong size");
+    alloc_fatalf("wrong size for %s at %s: expected %lld, got %lld",
+                 h->node->tag, h->node->where, (long long)h->size,
+                 (long long)size);
   for (i = 0; i < CVN_DBG_TAIL; i++)
     if ((unsigned char)((char *)p)[h->size + i] != CVN_DBG_TAIL_FILL)
-      alloc_fatal("redzone corrupted");
+      alloc_fatalf("redzone corrupted for %s at %s", h->node->tag,
+                   h->node->where);
   dbg_unlink(s, h->node);
   h->magic = CVN_DBG_DEAD;
   h->node->next = s->freed;
@@ -613,6 +641,14 @@ cvn_allocator cvn_debug_allocator(cvn_allocator backing) {
   s->backing = backing;
   s->live = NULL;
   s->freed = NULL;
+  s->pending_tag = NULL;
+  s->pending_where = NULL;
+  s->next_global = g_dbg_states;
+  g_dbg_states = s;
+  if (!g_dbg_atexit_installed) {
+    atexit(dbg_atexit);
+    g_dbg_atexit_installed = 1;
+  }
   a.vtable = &debug_vtable;
   a.state = s;
   return a;
@@ -636,25 +672,71 @@ bool cvn_debug_check(cvn_allocator a) {
   return true;
 }
 
-int64_t cvn_debug_report(cvn_allocator a) {
-  dbg_state *s = (dbg_state *)a.state;
+static int64_t dbg_report_state(dbg_state *s) {
   dbg_node *cur;
   int64_t n = 0;
+  int64_t total = 0;
+  int64_t idx = 0;
   if (!dbg_state_ok(s))
     return 0;
-  for (cur = s->live; cur != NULL; cur = cur->next)
+  for (cur = s->live; cur != NULL; cur = cur->next) {
     n++;
-  if (n > 0) {
-    fprintf(stderr, "[debug allocator] leaked %lld block(s)\n",
-            (long long)n);
-    for (cur = s->live; cur != NULL; cur = cur->next) {
-      dbg_hdr *h = hdr_of(cur->user);
-      fprintf(stderr, "  %p: %lld byte(s)\n", cur->user,
-              (long long)h->size);
-    }
-    fflush(stderr);
+    total += cur->size;
   }
+  if (n == 0)
+    return 0;
+  fprintf(stderr, "[debug allocator] leaked %lld block(s), %lld byte(s)\n",
+          (long long)n, (long long)total);
+  for (cur = s->live; cur != NULL; cur = cur->next) {
+    idx++;
+    fprintf(stderr, "  #%lld %s (%lld byte(s)) at %s ptr=%p\n",
+            (long long)idx, cur->tag, (long long)cur->size, cur->where,
+            cur->user);
+  }
+  fprintf(stderr, "  by type:\n");
+  for (cur = s->live; cur != NULL; cur = cur->next) {
+    dbg_node *prev;
+    dbg_node *scan;
+    int earlier = 0;
+    int64_t cnt = 0;
+    int64_t sum = 0;
+    for (prev = s->live; prev != cur; prev = prev->next)
+      if (strcmp(prev->tag, cur->tag) == 0)
+        earlier = 1;
+    if (earlier)
+      continue;
+    for (scan = s->live; scan != NULL; scan = scan->next)
+      if (strcmp(scan->tag, cur->tag) == 0) {
+        cnt++;
+        sum += scan->size;
+      }
+    fprintf(stderr, "    %s x%lld, %lld byte(s)\n", cur->tag,
+            (long long)cnt, (long long)sum);
+  }
+  fflush(stderr);
   return n;
+}
+
+int64_t cvn_debug_report(cvn_allocator a) {
+  dbg_state *s = (dbg_state *)a.state;
+  if (!dbg_state_ok(s))
+    return 0;
+  return dbg_report_state(s);
+}
+
+static void dbg_atexit(void) {
+  dbg_state *s;
+  int leaked = 0;
+  const char *env = getenv("CVN_DEBUG_FAIL_ON_LEAK");
+  int fail = env != NULL && strcmp(env, "1") == 0;
+  for (s = g_dbg_states; s != NULL; s = s->next_global) {
+    if (dbg_state_ok(s) && dbg_report_state(s) > 0)
+      leaked = 1;
+  }
+  if (leaked && fail) {
+    fflush(stderr);
+    _Exit(3);
+  }
 }
 
 void cvn_debug_fail_on_leak(cvn_allocator a) {
@@ -663,17 +745,26 @@ void cvn_debug_fail_on_leak(cvn_allocator a) {
     fprintf(stderr, "allocator error: leaked %lld block(s)\n",
             (long long)n);
     fflush(stderr);
-    exit(3);
+    _Exit(3);
   }
 }
 
 void cvn_debug_deinit(cvn_allocator a) {
   dbg_state *s = (dbg_state *)a.state;
   dbg_node *cur;
+  dbg_state **link;
   if (!dbg_state_ok(s))
     return;
   if (s->live != NULL)
-    (void)cvn_debug_report(a);
+    (void)dbg_report_state(s);
+  link = &g_dbg_states;
+  while (*link != NULL) {
+    if (*link == s) {
+      *link = s->next_global;
+      break;
+    }
+    link = &(*link)->next_global;
+  }
   cur = s->live;
   while (cur != NULL) {
     dbg_node *next = cur->next;
@@ -737,6 +828,23 @@ cvn_result_ptr cvn_alloc_aligned(cvn_allocator a, int64_t n, int64_t align) {
 
 cvn_result_ptr cvn_alloc_bytes(cvn_allocator a, int64_t n) {
   return cvn_alloc_aligned(a, n, 8);
+}
+
+cvn_result_ptr cvn_alloc_tagged(cvn_allocator a, int64_t n, int64_t align,
+                                const char *tag, const char *where) {
+  if (a.vtable == &debug_vtable) {
+    dbg_state *s = (dbg_state *)a.state;
+    if (dbg_state_ok(s)) {
+      cvn_result_ptr r;
+      s->pending_tag = tag != NULL ? tag : "?";
+      s->pending_where = where != NULL ? where : "?";
+      r = cvn_alloc_aligned(a, n, align);
+      s->pending_tag = NULL;
+      s->pending_where = NULL;
+      return r;
+    }
+  }
+  return cvn_alloc_aligned(a, n, align);
 }
 
 cvn_result_ptr cvn_alloc_zeroed(cvn_allocator a, int64_t n) {

@@ -773,7 +773,7 @@ type
 | `fixedAllocator` | `fixedAllocator(buf)` | bump внутри чужого буфера | no-op, всё сразу через `reset()` | нет | горячий путь без динамической памяти |
 | `arenaAllocator` | `arenaAllocator(backing, chunk)` | цепочка чанков, bump | `free` отвергается (в debug — assert) | нет | парсинг запроса: всё умирает вместе |
 | `stackAllocator` | `stackAllocator(backing, size)` | LIFO-указатель | только LIFO | нет | временные буферы в цикле |
-| `debugAllocator` | `initDebug(backing)` | redzone + учёт размеров + список живых | проверяет владельца и размер | нет | тесты, CI |
+| `debugAllocator` | `initDebug(backing)` | redzone + тип/`file:line` + учёт размеров + список живых | проверяет владельца, размер и redzone; отчёт на exit | нет | тесты, CI |
 | `taskAllocator` | `taskAllocator()` | зависит от исполнителя (§3.8) | вручную | по задаче | код, вызванный из задачи |
 
 Реализация v0.4 (ещё без классов и методов) использует функции:
@@ -916,6 +916,12 @@ proc dupe*[T](a: Allocator, s: Slice[T]): !seq[T]
 `a.destroy(p)` (только `free`, без `deinit` полей). Это sugar над
 `allocAligned`/`freeBytes` с `sizeof(T)`/`_Alignof(T)` и сгенерированным
 `cvn_new_T`; `alloc[T]`/`free(Slice)` по-прежнему ждут generics и `Slice[T]`.
+
+В debug-аллокаторе (`initDebug`) `create` передаёт тип и `file:line`:
+`debugReport(a)` печатает по каждому живому блоку `Node (48 byte(s)) at
+file:line ptr=...` и сводку по типам; double free/неверный размер/redzone
+сообщают исходное место. Debug-аллокаторы автоматически печатают утечки при
+выходе; `CVN_DEBUG_FAIL_ON_LEAK=1` превращает это в exit 3 для CI.
 
 Жёсткие правила:
 
