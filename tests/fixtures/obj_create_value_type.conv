@@ -1,0 +1,13 @@
+{.profile: kernel.}
+from core/mem import pageAllocator
+
+type
+  Node* = object
+    id*: int
+  Other* = object
+    id*: int
+
+proc main(): !void =
+  let a = pageAllocator()
+  let p = try a.create(Node, Other(id: 1))
+  discard p

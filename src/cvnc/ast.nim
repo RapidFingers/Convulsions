@@ -8,7 +8,8 @@ type
     nkModule, nkPragma, nkFromImport, nkTypeDecl, nkProcDecl, nkParam,
     nkBlock, nkLet, nkVar, nkDefer, nkReturn, nkDiscard, nkCall, nkField,
     nkIdent, nkIntLit, nkStrLit, nkCharLit, nkUnary, nkBinary, nkTry,
-    nkTypeName, nkPtrType, nkResultType, nkFieldDecl, nkNamedField, nkAssign
+    nkTypeName, nkPtrType, nkResultType, nkFieldDecl, nkNamedField, nkAssign,
+    nkDeref
 
   AstNode* = ref object
     line*: int
@@ -86,6 +87,8 @@ type
     of nkAssign:
       lhs*: AstNode
       rhs*: AstNode
+    of nkDeref:
+      derefObj*: AstNode
 
 proc newNode*(kind: NodeKind; line, col: int): AstNode =
   AstNode(kind: kind, line: line, col: col)
@@ -155,4 +158,6 @@ proc dumpAst*(n: AstNode; indent = 0): string =
   of nkAssign:
     result.add dumpAst(n.lhs, indent + 1)
     result.add dumpAst(n.rhs, indent + 1)
+  of nkDeref:
+    result.add dumpAst(n.derefObj, indent + 1)
   else: discard

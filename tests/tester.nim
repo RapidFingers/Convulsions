@@ -177,7 +177,7 @@ block:
   check hirs.len == 1, "lower: одна не-external процедура"
   var hasDeinit = false
   for ins in hirs[0].instrs:
-    if ins.op == hiDeinit:
+    if ins.op in {hiDeinit, hiPathDeinit}:
       hasDeinit = true
   check hasDeinit, "lower: deinit понижен"
   checkEq prog.strings.len, 2, "lower: два строковых литерала"
@@ -266,6 +266,13 @@ let negatives = [
   ("obj_sizeof_bad.conv", "E-TYPE"),
   ("obj_opaque_ctor.conv", "E-UNSUPPORTED"),
   ("obj_ufcs_field_call.conv", "E-TYPE"),
+  ("obj_create_int.conv", "E-UNSUPPORTED"),
+  ("obj_create_value_type.conv", "E-TYPE"),
+  ("obj_destroy_value.conv", "E-TYPE"),
+  ("obj_destroy_nonalloc.conv", "E-UNDEF"),
+  ("obj_ptr_rebind_let.conv", "E-IMMUTABLE"),
+  ("obj_deref_nonptr.conv", "E-TYPE"),
+  ("obj_index_unsupported.conv", "E-UNSUPPORTED"),
 ]
 
 for item in negatives:
@@ -435,11 +442,55 @@ for item in allocNegatives:
     checkEq r.code, item[2], item[0] & ": exit code"
     check item[3] in r.output, item[0] & ": ожидался " & item[3]
 
+# ------------------------------------------------- e2e: аллокация объектов
+block:
+  let exe = tmp / "objects_alloc"
+  let b = run(cvn, @["build", root / "examples" / "objects_alloc.conv",
+                     "-o", exe,
+                     "--path=" & stdlib, "--runtime-path=" & runtime])
+  checkEq b.code, 0, "objalloc: пример собирается (" & b.output & ")"
+  if b.code == 0:
+    var e = exe
+    if not fileExists(e) and fileExists(exe & ExeSuffix):
+      e = exe & ExeSuffix
+    let r = run(e, @[])
+    checkEq r.code, 0, "objalloc: exit code"
+    checkEq r.output, "objects-alloc ok\n", "objalloc: stdout"
+
+let objAllocPositives = [
+  ("obj_create_zero.conv", "obj_create_zero", "create-zero-ok\n"),
+  ("obj_create_value.conv", "obj_create_value", "create-value-ok\n"),
+  ("obj_ptr_mut.conv", "obj_ptr_mut", "ptr-mut-ok\n"),
+  ("obj_fixed_create.conv", "obj_fixed_create", "fixed-create-ok\n"),
+]
+
+for item in objAllocPositives:
+  let b = buildFixture(item[0], item[1])
+  checkEq b.code, 0, item[0] & ": собирается (" & b.output & ")"
+  if b.code == 0:
+    let r = run(b.exe, @[])
+    checkEq r.code, 0, item[0] & ": exit code"
+    checkEq r.output, item[2], item[0] & ": stdout"
+
+let objAllocNegatives = [
+  ("obj_fixed_create_oom.conv", "obj_fixed_create_oom", 1, "error[1]"),
+  ("obj_destroy_twice.conv", "obj_destroy_twice", 3, "double free"),
+  ("obj_create_leak.conv", "obj_create_leak", 3, "leaked"),
+]
+
+for item in objAllocNegatives:
+  let b = buildFixture(item[0], item[1])
+  checkEq b.code, 0, item[0] & ": собирается (" & b.output & ")"
+  if b.code == 0:
+    let r = run(b.exe, @[])
+    checkEq r.code, item[2], item[0] & ": exit code"
+    check item[3] in r.output, item[0] & ": ожидался " & item[3]
+
 # ---------------------------------------------------------------- e2e: version
 block:
   let r = run(cvn, @["version"])
   checkEq r.code, 0, "version: exit code"
-  check "0.4.0" in r.output, "version: номер версии"
+  check "0.5.0" in r.output, "version: номер версии"
 
 if failures > 0:
   echo "\n", failures, " проверок провалено"

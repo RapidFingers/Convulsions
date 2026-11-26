@@ -40,25 +40,37 @@ proc internString(l: Lower; s: string): int =
   l.prog.strings.add s
   l.prog.strings.len - 1
 
-proc flattenPath(n: AstNode): tuple[root: AstNode, path: seq[string]] =
-  var names: seq[string]
-  var cur = n
-  while cur != nil and cur.kind == nkField:
-    names.add cur.fieldName
-    cur = cur.obj
-  names.reverse()
-  (cur, names)
-
-proc rootSlot(l: Lower; n: AstNode): tuple[slot: int, rootPtr: bool] =
-  let sym = l.prog.syms[n.symId]
-  (l.symSlots[n.symId], sym.byRef)
-
 proc withLabel(ins: HirInstr; label: int): HirInstr =
   result = ins
   result.label = label
 
 proc lowerExpr(l: Lower; n: AstNode): int
 proc lowerStmt(l: Lower; n: AstNode)
+proc lowerPath(l: Lower; n: AstNode): tuple[slot: int, rootPtr: bool,
+                                            path: seq[string]]
+
+proc lowerPath(l: Lower; n: AstNode): tuple[slot: int, rootPtr: bool,
+                                            path: seq[string]] =
+  case n.kind
+  of nkIdent:
+    let sym = l.prog.syms[n.symId]
+    let slot = l.symSlots[n.symId]
+    var rootPtr = sym.byRef
+    if l.slots[slot].kind == tyPtr:
+      rootPtr = true
+    (slot, rootPtr, newSeq[string]())
+  of nkDeref:
+    (l.lowerExpr(n.derefObj), true, newSeq[string]())
+  of nkField:
+    if n.obj.typ != nil and n.obj.typ.kind == tyPtr:
+      (l.lowerExpr(n.obj), true, @[n.fieldName])
+    else:
+      var r = l.lowerPath(n.obj)
+      r.path.add n.fieldName
+      r
+  else:
+    fail("E-INTERNAL", l.prog.entry.file, n.line, n.col,
+         "выражение не является lvalue")
 
 proc lowerExpr(l: Lower; n: AstNode): int =
   case n.kind
@@ -103,15 +115,21 @@ proc lowerExpr(l: Lower; n: AstNode): int =
       ins.a = a
       l.emit(ins)
     else:
-      let (root, path) = flattenPath(n)
-      let rs = l.rootSlot(root)
+      let r = l.lowerPath(n)
       result = l.newSlot(n.typ)
       var ins = newInstr(hiPathGet)
       ins.dst = result
-      ins.a = rs.slot
-      ins.rootPtr = rs.rootPtr
-      ins.path = path
+      ins.a = r.slot
+      ins.rootPtr = r.rootPtr
+      ins.path = r.path
       l.emit(ins)
+  of nkDeref:
+    let p = l.lowerExpr(n.derefObj)
+    result = l.newSlot(n.typ)
+    var ins = newInstr(hiLoadPtr)
+    ins.dst = result
+    ins.a = p
+    l.emit(ins)
   of nkUnary:
     let a = l.lowerExpr(n.a)
     result = l.newSlot(n.typ)
@@ -178,29 +196,34 @@ proc lowerExpr(l: Lower; n: AstNode): int =
         ins.text = n.args[1].name
       l.emit(ins)
       return
+    if callee.builtin == "create":
+      let a = l.lowerExpr(n.args[0])
+      result = l.newSlot(n.typ)
+      var ins = newInstr(hiObjCreate)
+      ins.dst = result
+      ins.a = a
+      ins.typeRef = n.typeRef
+      if n.args.len > 1:
+        ins.b = l.lowerExpr(n.args[1])
+      l.emit(ins)
+      return
+    if callee.builtin == "destroy":
+      let a = l.lowerExpr(n.args[0])
+      let p = l.lowerExpr(n.args[1])
+      var ins = newInstr(hiObjDestroy)
+      ins.a = a
+      ins.b = p
+      ins.typeRef = n.typeRef
+      l.emit(ins)
+      return -1
     if callee.builtin == "deinit":
-      let arg = n.args[0]
-      if arg.kind == nkField:
-        let (root, path) = flattenPath(arg)
-        let rs = l.rootSlot(root)
-        var ins = newInstr(hiPathDeinit)
-        ins.a = rs.slot
-        ins.rootPtr = rs.rootPtr
-        ins.path = path
-        l.emit(ins)
-        return -1
-      elif arg.kind == nkIdent and l.prog.syms[arg.symId].byRef:
-        var ins = newInstr(hiPathDeinit)
-        ins.a = l.symSlots[arg.symId]
-        ins.rootPtr = true
-        l.emit(ins)
-        return -1
-      else:
-        let a = l.lowerExpr(arg)
-        var ins = newInstr(hiDeinit)
-        ins.a = a
-        l.emit(ins)
-        return -1
+      let r = l.lowerPath(n.args[0])
+      var ins = newInstr(hiPathDeinit)
+      ins.a = r.slot
+      ins.rootPtr = r.rootPtr
+      ins.path = r.path
+      l.emit(ins)
+      return -1
     if callee.builtin == "assert":
       let cond = l.lowerExpr(n.args[0])
       var ins = newInstr(hiAssert)
@@ -216,17 +239,16 @@ proc lowerExpr(l: Lower; n: AstNode): int =
       if isVar:
         if a.kind == nkIdent and l.prog.syms[a.symId].byRef:
           argSlots.add l.symSlots[a.symId]
+        elif a.kind == nkDeref:
+          argSlots.add l.lowerExpr(a.derefObj)
         else:
-          let (root, path) =
-            if a.kind == nkField: flattenPath(a)
-            else: (a, newSeq[string]())
-          let rs = l.rootSlot(root)
+          let r = l.lowerPath(a)
           let ps = l.newSlot(ptrTo(a.typ))
           var ad = newInstr(hiPathAddr)
           ad.dst = ps
-          ad.a = rs.slot
-          ad.rootPtr = rs.rootPtr
-          ad.path = path
+          ad.a = r.slot
+          ad.rootPtr = r.rootPtr
+          ad.path = r.path
           l.emit(ad)
           argSlots.add ps
       else:
@@ -335,14 +357,20 @@ proc lowerStmt(l: Lower; n: AstNode) =
         ins.a = v
         l.emit(ins)
     elif n.lhs.kind == nkField:
-      let (root, path) = flattenPath(n.lhs)
-      let rs = l.rootSlot(root)
+      let r = l.lowerPath(n.lhs)
       let v = l.lowerExpr(n.rhs)
       var ins = newInstr(hiPathSet)
-      ins.a = rs.slot
+      ins.a = r.slot
       ins.b = v
-      ins.rootPtr = rs.rootPtr
-      ins.path = path
+      ins.rootPtr = r.rootPtr
+      ins.path = r.path
+      l.emit(ins)
+    elif n.lhs.kind == nkDeref:
+      let p = l.lowerExpr(n.lhs.derefObj)
+      let v = l.lowerExpr(n.rhs)
+      var ins = newInstr(hiStorePtr)
+      ins.a = p
+      ins.b = v
       l.emit(ins)
     else:
       fail("E-INTERNAL", l.prog.entry.file, n.line, n.col,

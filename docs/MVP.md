@@ -1,8 +1,8 @@
-# Convulsions MVP (v0.4): kernel, UTF-8, объекты, аллокаторы
+# Convulsions MVP (v0.5): kernel, UTF-8, объекты, аллокаторы
 
 Минимальный компилятор языка Convulsions: профиль `kernel`, бэкенд `native`
 (HIR → C11 → gcc). Реализует hello world, UTF-8-модель `string` (README §6.7),
-value-объекты (§6.2) и аллокаторы (§3.2–3.8).
+value-объекты и их аллокацию в куче (§6.2, §3.6), аллокаторы (§3.2–3.8).
 Спецификация языка — [../README.md](../README.md).
 
 ## Сборка и запуск
@@ -13,6 +13,8 @@ $ bin/cvn run examples/hello.conv
 hello, convulsions
 $ bin/cvn run examples/objects.conv
 objects ok
+$ bin/cvn run examples/objects_alloc.conv
+objects-alloc ok
 $ bin/cvn run examples/allocators.conv
 allocators ok
 ```
@@ -28,6 +30,7 @@ allocators ok
 | Типы | `void`, `int`, `bool`, `char`, `string`, `Rune`, `pointer`, `ptr T`, `!T`, `object` с полями, непрозрачный `{.importc.}`-`object` |
 | Литералы | целые, строковые `"..."`, байтовые `b"..."`, char `'a'`/`'\xFF'` |
 | Объекты | `T(f: v, ...)`, `T()`, `p.x`, `p.a.b`, `p = q`, копии, вложенность, `ptr`-поля |
+| Аллокация объектов | `a.create(T)`, `a.create(T, value)`, `a.destroy(p)`, `p.x` через `ptr`, `p[]` |
 | Аллокаторы | `null/c/page/fixed/arena/stack/task`, `initDebug`, байтовые `alloc/free/realloc`, `memFill/memByte/...` |
 | Выражения | имена, вызовы, UFCS, `try`, `-`, `not`, арифметика, сравнения скаляров, `s.len`, `sizeof/alignof/offsetof`, `T(x)` |
 | Операторы | `let`, `var`, `return`, `discard`, `defer:`, `try`, `assert(cond[, "msg"])`, присваивание `lhs = expr` |
@@ -36,8 +39,8 @@ allocators ok
 
 Не поддерживается (ошибка `E-UNSUPPORTED` с версией): `if/while/for`,
 `catch:`/`errdefer`, `seq`, `union`/`enum`/`distinct`, `class`/`interface`,
-`spawn`, `runes`, срезы строк, `addr`/`[]`, `nil`, `{.packed.}`/`{.align.}`,
-сравнение объектов и строк, `user`-профиль, VM.
+`spawn`, `runes`, срезы строк, `addr`/`p[i]`, `nil`, `alloc[T]` для массивов,
+`{.packed.}`/`{.align.}`, сравнение объектов и строк, `user`-профиль, VM.
 
 ## Аллокаторы
 
@@ -87,8 +90,9 @@ exit 3); `debug` ловит double free, неверный размер, redzone 
 (`debugReport`/`debugFailOnLeak`); `taskAllocator()` пока возвращает
 `cAllocator()` — аллокатор корневой задачи.
 
-До появления `seq[T]`/дженериков типизированные `alloc[T]`/`create(T)`/`destroy(p)`
-не реализованы — только байтовый API.
+До появления `seq[T]`/дженериков `alloc[T]` для массивов, `free(Slice)` и `dupe`
+не реализованы. Для одиночных объектов уже работают `create`/`destroy`
+(см. «Аллокация объектов»); байтовый API остаётся для остального.
 
 ## Объекты
 
@@ -108,6 +112,34 @@ proc shift(p: Point, dx: int): !Point =
 `let`/value-параметры неизменяемы, `var`-параметры — мутабельные ссылки; поля
 видны по `*`; циклы по значению запрещены, через `ptr T` — разрешены;
 `sizeof/alignof/offsetof` вычисляются C-компилятором.
+
+## Аллокация объектов
+
+```conv
+type
+  Node* = object
+    id*: int
+    name*: string
+    next*: ptr Node
+
+let a = pageAllocator()
+let p = try a.create(Node)                  # zero/empty
+defer: a.destroy(p)
+p.id = 1
+p.name = try concat(cAllocator(), "root", "")
+defer: p.name.deinit()                      # deinit полей — вручную
+
+let q = try a.create(Node, Node(id: 2))     # копия значения
+p.next = q
+assert(p.next.id == 2)
+let v = p[]                                 # копия значения из указателя
+```
+
+`create` выделяет `sizeof(T)` с `_Alignof(T)` и заполняет `cvn_new_T()`
+(строки — `cvn_str_empty`) либо копирует `value`; `destroy` только освобождает
+память, не вызывая `deinit` полей. `p.x`/`p.x = v` авто-разыменовывают `ptr T`;
+`p[]` читает/пишет значение цели; `let p` не мешает менять поля через указатель,
+но запрещает `p = q`. `p[i]`, `nil`, `addr`, массивы объектов в куче — позже.
 
 ## UTF-8
 
@@ -139,9 +171,10 @@ runtime/cvnrt_alloc.c   аллокаторы, byte-API, debug, память
 - HIR без оптимизаций; `defer`-очистки дублируются на каждом выходе.
 - `deinit` и `assert` встроены в компилятор.
 - Нет классов/методов: аллокаторы и `deinit` — функции/встроенные операции.
-- Нет `seq`/`Slice`/дженериков: только байтовый API аллокаторов.
-- `runes`/`for`, срезы, `union`/`enum`, `addr`/`[]`, `{.packed.}`, сравнение
-  объектов и строк, debug-аллокатор по умолчанию не реализованы.
+- Нет `seq`/`Slice`/дженериков: байтовый API и `create/destroy` одиночных
+  объектов; массивов объектов в куче нет.
+- `runes`/`for`, срезы, `union`/`enum`, `addr`/`p[i]`, `nil`, `{.packed.}`,
+  сравнение объектов и строк, debug-аллокатор по умолчанию не реализованы.
 
 ## Тесты
 
@@ -152,7 +185,8 @@ $ nimble test
 - unit: лексер, парсер, sema/lower/cgen;
 - C-юниты: `tests/rt/test_utf.c` (декодер), `tests/rt/test_alloc.c`
   (c/page/fixed/arena/stack/debug, выравнивание, redzone, отчёты);
-- e2e: hello, defer-LIFO, UTF-8, объекты, `examples/allocators.conv`,
+- e2e: hello, defer-LIFO, UTF-8, объекты, аллокация объектов
+  (`examples/objects_alloc.conv`), `examples/allocators.conv`,
   `--emit-c` (детерминизм);
 - негативы: ошибки компилятора, OOM fixed, bad align, null allocator,
   stack LIFO, double free, неверный размер, redzone, утечка.

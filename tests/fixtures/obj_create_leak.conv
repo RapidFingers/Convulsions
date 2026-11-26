@@ -1,0 +1,12 @@
+{.profile: kernel.}
+from core/mem import cAllocator, initDebug, debugFailOnLeak
+
+type
+  Node* = object
+    id*: int
+
+proc main(): !void =
+  let d = initDebug(cAllocator())
+  let p = try d.create(Node)
+  discard p
+  debugFailOnLeak(d)

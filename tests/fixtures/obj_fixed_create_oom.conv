@@ -1,0 +1,16 @@
+{.profile: kernel.}
+from core/mem import pageAllocator, fixedAllocator, allocBytes, freeBytes, fixedDeinit
+
+type
+  Node* = object
+    id*: int
+    name*: string
+
+proc main(): !void =
+  let page = pageAllocator()
+  let buf = try allocBytes(page, 32)
+  defer: freeBytes(page, buf, 32)
+  let fx = fixedAllocator(buf, 32)
+  defer: fixedDeinit(fx)
+  let p = try fx.create(Node)
+  discard p

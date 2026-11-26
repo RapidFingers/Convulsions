@@ -1,0 +1,50 @@
+{.profile: kernel.}
+from core/mem import cAllocator, pageAllocator, arenaAllocator, initDebug, arenaDeinit, debugReport, debugDeinit
+from core/string import concat
+from core/io import println
+
+type
+  Node* = object
+    id*: int
+    name*: string
+    next*: ptr Node
+
+proc main(): !void =
+  let page = pageAllocator()
+  let p = try page.create(Node)
+  defer: page.destroy(p)
+  assert(p.id == 0)
+  assert(p.name.len == 0)
+  p.id = 1
+  p.name = try concat(cAllocator(), "root", "")
+  defer: p.name.deinit()
+
+  let v = p[]
+  assert(v.id == 1)
+  assert(v.name.len == 4)
+  assert(p[].id == 1)
+
+  let q = try page.create(Node, Node(id: 2))
+  defer: page.destroy(q)
+  p.next = q
+  let r = p.next
+  assert(r.id == 2)
+  assert(p.next.id == 2)
+
+  let ar = arenaAllocator(cAllocator(), 256)
+  defer: arenaDeinit(ar)
+  let n = try ar.create(Node)
+  n.id = 7
+  assert(n.id == 7)
+  let erase = Node(id: 3)
+  n[] = erase
+  assert(n.id == 3)
+
+  let dbg = initDebug(cAllocator())
+  defer: debugDeinit(dbg)
+  let d = try dbg.create(Node)
+  d.id = 9
+  dbg.destroy(d)
+  assert(debugReport(dbg) == 0)
+
+  try println("objects-alloc ok")

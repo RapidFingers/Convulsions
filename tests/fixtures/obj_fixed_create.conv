@@ -1,0 +1,24 @@
+{.profile: kernel.}
+from core/mem import pageAllocator, fixedAllocator, allocBytes, freeBytes, fixedReset, fixedDeinit
+from core/io import println
+
+type
+  Node* = object
+    id*: int
+    next*: ptr Node
+
+proc main(): !void =
+  let page = pageAllocator()
+  let buf = try allocBytes(page, 256)
+  defer: freeBytes(page, buf, 256)
+  let fx = fixedAllocator(buf, 256)
+  defer: fixedDeinit(fx)
+  let p = try fx.create(Node)
+  p.id = 4
+  assert(p.id == 4)
+  fx.destroy(p)
+  fixedReset(fx)
+  let q = try fx.create(Node, Node(id: 6))
+  assert(q.id == 6)
+  fx.destroy(q)
+  try println("fixed-create-ok")

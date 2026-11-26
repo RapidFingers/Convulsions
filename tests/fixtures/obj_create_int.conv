@@ -1,0 +1,7 @@
+{.profile: kernel.}
+from core/mem import pageAllocator
+
+proc main(): !void =
+  let a = pageAllocator()
+  let p = try a.create(int)
+  discard p

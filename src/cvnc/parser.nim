@@ -67,8 +67,8 @@ proc skipNewlines(p: var Parser) =
 
 proc unsupported(p: Parser; what, version: string) {.noreturn.} =
   p.failTok("E-UNSUPPORTED",
-            what & " не поддерживается в v0.1 (будет в " & version & ")",
-            "см. README и §3.2 плана MVP")
+            what & " не поддерживается в v0.5 (будет в " & version & ")",
+            "см. README и docs/MVP.md")
 
 proc versionFor(kw: Keyword): string =
   case kw
@@ -440,7 +440,15 @@ proc parsePostfix(p: var Parser): AstNode =
       f.fieldName = ft.text
       result = f
     elif p.at(tkLBracket):
-      p.unsupported("индексация", "v0.2")
+      let t = p.cur
+      discard p.advance()
+      if p.at(tkRBracket):
+        discard p.advance()
+        var d = newNode(nkDeref, t.line, t.col)
+        d.derefObj = result
+        result = d
+      else:
+        p.unsupported("индексация p[i]", "v0.6")
     else:
       break
 

@@ -1,0 +1,24 @@
+{.profile: kernel.}
+from core/mem import pageAllocator
+from core/io import println
+
+type
+  Node* = object
+    id*: int
+    next*: ptr Node
+
+proc main(): !void =
+  let a = pageAllocator()
+  let p = try a.create(Node)
+  defer: a.destroy(p)
+  let q = try a.create(Node, Node(id: 2))
+  defer: a.destroy(q)
+  assert(p.id == 0)
+  p.id = 1
+  assert(p.id == 1)
+  p.next = q
+  p.next.id = 3
+  assert(q.id == 3)
+  let r = p.next
+  assert(r.id == 3)
+  try println("ptr-mut-ok")

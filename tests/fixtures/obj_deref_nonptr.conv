@@ -1,0 +1,9 @@
+{.profile: kernel.}
+type
+  Node* = object
+    id*: int
+
+proc main(): !void =
+  let n = Node(id: 1)
+  let x = n[]
+  discard x

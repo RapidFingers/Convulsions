@@ -906,10 +906,16 @@ proc realloc*[T](a: Allocator, s: Slice[T], n: int): !Slice[T]
 proc dupe*[T](a: Allocator, s: Slice[T]): !seq[T]
 ```
 
-До появления generics/`seq[T]` (v0.4) те же операции доступны в байтовой
-форме: `allocBytes(a, n)`, `allocAligned(a, n, align)`, `allocZeroedBytes(a, n)`,
+До появления generics/`seq[T]` байтовый API: `allocBytes(a, n)`,
+`allocAligned(a, n, align)`, `allocZeroedBytes(a, n)`,
 `reallocBytes(a, p, oldSize, newSize)`, `reallocAligned(...)`, `freeBytes(a, p, size)`,
 возвращающие `!ptr char` и принимающие явный `size` (его требует vtable `free`).
+
+С v0.5 для non-opaque `object` работают компиляторные операции
+`a.create(T)` (zero/empty), `a.create(T, value)` (копия значения) и
+`a.destroy(p)` (только `free`, без `deinit` полей). Это sugar над
+`allocAligned`/`freeBytes` с `sizeof(T)`/`_Alignof(T)` и сгенерированным
+`cvn_new_T`; `alloc[T]`/`free(Slice)` по-прежнему ждут generics и `Slice[T]`.
 
 Жёсткие правила:
 
@@ -1963,6 +1969,11 @@ proc peek(w: weak ref Node): bool =
   если объект уже собран.
 - Равенство `ref` — идентичность. Структурное равенство объявляется процедурой
   `==` для конкретного типа; автоматического сравнения по полям нет.
+
+В v0.5 из этого реализованы только `ptr T` без `nil`, `addr` и арифметики:
+`p.x`/`p.x = v` авто-разыменовывают указатель, `p[]` читает и пишет значение
+цели, `let p` разрешает менять поля через `ptr`, но не сам указатель;
+`p[i]`, `nil`, `ref T` и `weak ref` — следующие милстоуны.
 
 ### 6.7 string и UTF-8
 

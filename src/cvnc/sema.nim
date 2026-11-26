@@ -24,6 +24,8 @@ type
     builtinDeinit: Symbol
     builtinAssert: Symbol
     builtinSizes: Table[string, Symbol]
+    builtinCreate: Symbol
+    builtinDestroy: Symbol
 
 proc addSym(s: Sema; sym: Symbol): int =
   sym.id = s.prog.syms.len
@@ -121,6 +123,17 @@ proc fieldIndex(t: Type; name: string): int =
 proc fieldVisible(s: Sema; t: Type; f: Field): bool =
   f.exported or t.ownerModule == s.curMod.path
 
+proc isAllocatorType(t: Type): bool =
+  t != nil and t.kind == tyObject and t.opaque and
+    t.cname == "cvn_allocator"
+
+proc ptrResultType(t: Type): Type =
+  let p = newType(tyPtr)
+  p.elem = t
+  let r = newType(tyResult)
+  r.elem = p
+  r
+
 proc typeFromName(s: Sema; n: AstNode; what: string): Type =
   if n.kind != nkIdent:
     fail("E-TYPE", s.curMod.file, n.line, n.col,
@@ -191,6 +204,10 @@ proc declareProc(s: Sema; n: AstNode) =
   var pvars: seq[bool]
   for p in n.params:
     let pt = s.typeFromNode(p.paramTypeNode)
+    if p.paramVar and pt.kind == tyPtr:
+      fail("E-UNSUPPORTED", s.curMod.file, p.line, p.col,
+           "var-параметр типа ptr T не поддерживается в v0.5",
+           "передавайте ptr T по значению")
     params.add pt
     pnames.add p.paramName
     pvars.add p.paramVar
@@ -272,22 +289,38 @@ proc addressable(n: AstNode): bool =
   case n.kind
   of nkIdent: true
   of nkField: addressable(n.obj)
+  of nkDeref: true
   else: false
 
 proc lvalueRoot(n: AstNode): AstNode =
   var cur = n
-  while cur != nil and cur.kind == nkField:
-    cur = cur.obj
+  while cur != nil and (cur.kind == nkField or cur.kind == nkDeref):
+    if cur.kind == nkField:
+      cur = cur.obj
+    else:
+      cur = cur.derefObj
   if cur != nil and cur.kind == nkIdent:
     return cur
   nil
 
 proc isMutableLvalue(s: Sema; n: AstNode): bool =
-  let r = lvalueRoot(n)
-  if r == nil or r.symId < 0 or r.symId >= s.prog.syms.len:
+  if n.isNil:
     return false
-  let sym = s.prog.syms[r.symId]
-  sym.kind == skVar or (sym.kind == skParam and sym.byRef)
+  case n.kind
+  of nkIdent:
+    if n.symId < 0 or n.symId >= s.prog.syms.len:
+      return false
+    let sym = s.prog.syms[n.symId]
+    sym.kind == skVar or (sym.kind == skParam and sym.byRef)
+  of nkField:
+    if n.obj.typ != nil and n.obj.typ.kind == tyPtr:
+      true
+    else:
+      s.isMutableLvalue(n.obj)
+  of nkDeref:
+    true
+  else:
+    false
 
 proc sameOrCoerce(a, b: Type): bool =
   if sameType(a, b):
@@ -326,6 +359,48 @@ proc analCall(s: Sema; n: AstNode): Type =
   if n.callee.kind == nkField:
     let fld = n.callee
     let objType = s.analExpr(fld.obj)
+    if isAllocatorType(objType) and fld.fieldName in ["create", "destroy"]:
+      if fld.fieldName == "create":
+        if n.args.len notin {1, 2}:
+          fail("E-ARG-COUNT", s.curMod.file, n.line, n.col,
+               "create ожидает 'create(T)' или 'create(T, value)'")
+        if n.args[0].kind != nkIdent:
+          fail("E-TYPE", s.curMod.file, n.args[0].line, n.args[0].col,
+               "create: первым аргументом должно быть имя типа")
+        let t = s.typeFromName(n.args[0], "create")
+        if t.kind != tyObject or t.opaque:
+          fail("E-UNSUPPORTED", s.curMod.file, n.line, n.col,
+               "create поддерживает только object с полями",
+               "примитивы и импортированные opaque-типы — позже")
+        var valueNode: AstNode = nil
+        if n.args.len == 2:
+          valueNode = n.args[1]
+          let vt = s.analExpr(valueNode)
+          if not sameType(vt, t):
+            fail("E-TYPE", s.curMod.file, valueNode.line, valueNode.col,
+                 "create(" & t.name & ", value): ожидался " & typeName(t) &
+                 ", получен " & typeName(vt))
+        n.typeRef = t
+        n.symId = s.builtinCreate.id
+        n.typ = ptrResultType(t)
+        n.args = @[fld.obj]
+        if valueNode != nil:
+          n.args.add valueNode
+        return n.typ
+      else:
+        if n.args.len != 1:
+          fail("E-ARG-COUNT", s.curMod.file, n.line, n.col,
+               "destroy ожидает ровно один аргумент")
+        let argNode = n.args[0]
+        let at = s.analExpr(argNode)
+        if at.kind != tyPtr or at.elem.kind != tyObject or at.elem.opaque:
+          fail("E-TYPE", s.curMod.file, argNode.line, argNode.col,
+               "destroy принимает ptr T, где T — object с полями")
+        n.typeRef = at.elem
+        n.symId = s.builtinDestroy.id
+        n.typ = s.builtins["void"]
+        n.args = @[fld.obj, argNode]
+        return n.typ
     if fld.fieldName == "deinit":
       if objType.kind != tyString:
         fail("E-UNSUPPORTED", s.curMod.file, fld.line, fld.col,
@@ -543,6 +618,19 @@ proc analExpr(s: Sema; n: AstNode): Type =
     let ot = s.analExpr(n.obj)
     if ot.kind == tyString and n.fieldName == "len":
       n.typ = s.builtins["int"]
+    elif ot.kind == tyPtr and ot.elem.kind == tyObject:
+      if ot.elem.opaque:
+        fail("E-UNSUPPORTED", s.curMod.file, n.line, n.col,
+             "поля непрозрачного импортированного типа недоступны")
+      let idx = fieldIndex(ot.elem, n.fieldName)
+      if idx < 0:
+        fail("E-FIELD", s.curMod.file, n.line, n.col,
+             "у типа " & ot.elem.name & " нет поля " & n.fieldName)
+      let fld = ot.elem.fields[idx]
+      if not s.fieldVisible(ot.elem, fld):
+        fail("E-PRIVATE", s.curMod.file, n.line, n.col,
+             "поле " & n.fieldName & " не экспортируется")
+      n.typ = fld.typ
     elif ot.kind == tyObject:
       if ot.opaque:
         fail("E-UNSUPPORTED", s.curMod.file, n.line, n.col,
@@ -559,6 +647,12 @@ proc analExpr(s: Sema; n: AstNode): Type =
     else:
       fail("E-TYPE", s.curMod.file, n.line, n.col,
            "у типа " & typeName(ot) & " нет полей")
+  of nkDeref:
+    let ot = s.analExpr(n.derefObj)
+    if ot.kind != tyPtr:
+      fail("E-TYPE", s.curMod.file, n.line, n.col,
+           "p[] применимо только к ptr T, получен " & typeName(ot))
+    n.typ = ot.elem
   else:
     fail("E-PARSE", s.curMod.file, n.line, n.col, "неожиданный узел выражения")
   n.typ
@@ -754,6 +848,16 @@ proc analyze*(modules: seq[ModuleInfo]; opts: BuildOptions): Program =
     let sym = Symbol(kind: skBuiltin, name: nm, typ: ty, builtin: nm)
     discard s.addSym(sym)
     s.builtinSizes[nm] = sym
+
+  for nm in ["create", "destroy"]:
+    let ty = newType(tyProc)
+    ty.ret = s.builtins["void"]
+    let sym = Symbol(kind: skBuiltin, name: nm, typ: ty, builtin: nm)
+    discard s.addSym(sym)
+    if nm == "create":
+      s.builtinCreate = sym
+    else:
+      s.builtinDestroy = sym
 
   for m in modules:
     if m.isEntry:
