@@ -4,7 +4,8 @@ import types
 
 type
   HirOp* = enum
-    hiLabel, hiJmp, hiConstInt, hiConstStr, hiCall, hiDeinit, hiCheckResult,
+    hiLabel, hiJmp, hiJmpIfFalse, hiConstInt, hiConstStr, hiCall, hiDeinit,
+    hiCheckResult,
     hiExtractOk, hiMov, hiBinary, hiUnary, hiRet, hiRetVal, hiRetErrFrom,
     hiConv, hiStrLen, hiAssert, hiPathGet, hiPathSet, hiPathAddr,
     hiPathDeinit, hiLoadPtr, hiStorePtr, hiObjInit, hiObjCreate,

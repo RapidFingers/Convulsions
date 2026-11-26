@@ -67,7 +67,7 @@ proc skipNewlines(p: var Parser) =
 
 proc unsupported(p: Parser; what, version: string) {.noreturn.} =
   p.failTok("E-UNSUPPORTED",
-            what & " не поддерживается в v0.9 (будет в " & version & ")",
+            what & " не поддерживается в v0.10 (будет в " & version & ")",
             "см. README и docs/MVP.md")
 
 proc versionFor(kw: Keyword): string =
@@ -310,7 +310,8 @@ proc parseBlock(p: var Parser): AstNode =
       result.stmts.add st
       # блок `defer:` съедает свой newline и dedent, поэтому следующим
       # токеном может быть начало следующего оператора
-      if st.kind != nkDefer and p.cur.kind notin {tkNewline, tkDedent, tkEof}:
+      if st.kind notin {nkDefer, nkIf, nkWhile} and
+         p.cur.kind notin {tkNewline, tkDedent, tkEof}:
         p.failTok("E-PARSE", "ожидался конец строки")
       p.skipNewlines()
     discard p.expect(tkDedent, "конец блока")
@@ -439,8 +440,14 @@ proc parseAtom(p: var Parser): AstNode =
       let inner = p.parseUnary()
       result = newNode(nkAwait, t.line, t.col)
       result.awaitTask = inner
-    of kwTrue, kwFalse:
-      p.unsupported("bool-литерал", "v0.2")
+    of kwTrue:
+      discard p.advance()
+      result = newNode(nkBoolLit, t.line, t.col)
+      result.boolVal = true
+    of kwFalse:
+      discard p.advance()
+      result = newNode(nkBoolLit, t.line, t.col)
+      result.boolVal = false
     else:
       p.unsupported("выражение с '" & t.text & "'", versionFor(t.kw))
   else:
@@ -619,6 +626,33 @@ proc parseExprOrAssign(p: var Parser): AstNode =
     n.rhs = rhs
     result = n
 
+proc parseIf(p: var Parser): AstNode =
+  let start = p.cur
+  discard p.advance()
+  var root = newNode(nkIf, start.line, start.col)
+  root.cond = p.parseExpr()
+  root.thenBody = p.parseBodyAfterColon()
+  var cur = root
+  while p.atKw(kwElif):
+    let et = p.cur
+    discard p.advance()
+    var branch = newNode(nkIf, et.line, et.col)
+    branch.cond = p.parseExpr()
+    branch.thenBody = p.parseBodyAfterColon()
+    cur.elseBody = branch
+    cur = branch
+  if p.atKw(kwElse):
+    discard p.advance()
+    cur.elseBody = p.parseBodyAfterColon()
+  result = root
+
+proc parseWhile(p: var Parser): AstNode =
+  let start = p.cur
+  discard p.advance()
+  result = newNode(nkWhile, start.line, start.col)
+  result.whileCond = p.parseExpr()
+  result.whileBody = p.parseBodyAfterColon()
+
 proc parseStmt(p: var Parser): AstNode =
   let t = p.cur
   case t.kind
@@ -644,6 +678,16 @@ proc parseStmt(p: var Parser): AstNode =
       result.varName = nt.text
       result.varTypeNode = typeNode
       result.init = initExpr
+    of kwIf:
+      result = p.parseIf()
+    of kwWhile:
+      result = p.parseWhile()
+    of kwBreak:
+      discard p.advance()
+      result = newNode(nkBreak, t.line, t.col)
+    of kwContinue:
+      discard p.advance()
+      result = newNode(nkContinue, t.line, t.col)
     of kwDefer:
       discard p.advance()
       result = newNode(nkDefer, t.line, t.col)

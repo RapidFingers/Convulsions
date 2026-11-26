@@ -1,0 +1,33 @@
+{.profile: kernel.}
+{.header: "<cvnrt_net.h>".}
+import core/mem
+
+type
+  Socket* {.importc: "cvn_socket", header: "<cvnrt_net.h>".} = object
+
+proc listen*(host: string, port: int): !Socket
+  {.importc: "cvn_net_listen", cdecl.}
+
+proc accept*(s: Socket): !Socket
+  {.importc: "cvn_net_accept", cdecl.}
+
+proc connect*(host: string, port: int): !Socket
+  {.importc: "cvn_net_connect", cdecl.}
+
+proc read*(s: Socket, a: Allocator, maxBytes: int): !string
+  {.importc: "cvn_net_read", cdecl.}
+
+proc readInto*(s: Socket, buf: ptr char, maxBytes: int): !int
+  {.importc: "cvn_net_read_into", cdecl.}
+
+proc write*(s: Socket, data: string): !void
+  {.importc: "cvn_net_write", cdecl.}
+
+proc writeBytes*(s: Socket, buf: ptr char, n: int): !void
+  {.importc: "cvn_net_write_bytes", cdecl.}
+
+proc close*(s: Socket): void
+  {.importc: "cvn_net_close", cdecl.}
+
+proc localPort*(s: Socket): int
+  {.importc: "cvn_net_local_port", cdecl.}

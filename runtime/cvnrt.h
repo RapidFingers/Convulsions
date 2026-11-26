@@ -167,6 +167,7 @@ cvn_error cvn_exec_run(cvn_main_fn fn, int workers, int stack_kb);
 
 cvn_result_string cvn_str_concat(cvn_allocator a, cvn_string x, cvn_string y);
 void              cvn_str_deinit(cvn_string *s);
+bool              cvn_str_equal(cvn_string x, cvn_string y);
 cvn_error         cvn_io_println(cvn_string s);
 
 /* UTF-8: декодирование, проверка, обратное кодирование. */

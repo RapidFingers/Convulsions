@@ -359,6 +359,9 @@ let negatives = [
   ("fiber_spawn_plain.conv", "E-SPAWN-RET"),
   ("fiber_spawn_var.conv", "E-SPAWN-VAR"),
   ("fiber_await_nontask.conv", "E-TYPE"),
+  ("flow_bad_break.conv", "E-LOOP-CONTROL"),
+  ("flow_bad_defer.conv", "E-DEFER-CONTROL"),
+  ("flow_bad_cond.conv", "E-TYPE"),
 ]
 
 for item in negatives:
@@ -430,6 +433,25 @@ block:
     let r = run(ctest, @[])
     checkEq r.code, 0, "c-fiber: запуск (" & r.output & ")"
     check "c-fiber-ok" in r.output, "c-fiber: маркер"
+
+# ---------------------------------------------------------- C-юниты sockets
+block:
+  let ctest = tmp / ("test_net" & ExeSuffix)
+  var args = @["-std=c11", "-Wall", "-Wextra", "-Werror",
+               "-I", runtime, "-o", ctest,
+               root / "tests" / "rt" / "test_net.c",
+               runtime / "cvnrt.c", runtime / "cvnrt_alloc.c",
+               runtime / "cvnrt_fiber.c", runtime / "cvnrt_net.c"]
+  when defined(windows):
+    args.add "-lws2_32"
+  else:
+    args.add "-pthread"
+  let b = run("gcc", args)
+  checkEq b.code, 0, "c-net: сборка (" & b.output & ")"
+  if b.code == 0:
+    let r = run(ctest, @[])
+    checkEq r.code, 0, "c-net: запуск (" & r.output & ")"
+    check "c-net-ok" in r.output, "c-net: маркер"
 
 # ------------------------------------------------------------------ e2e: UTF-8
 block:
@@ -731,11 +753,61 @@ block:
     checkEq r.code, 1, "fiber_error: exit code"
     check "error[3]" in r.output, "fiber_error: ошибка задачи"
 
+# ---------------------------------------------------------------- e2e: control flow
+block:
+  let b = buildFixture("flow_test.conv", "flow_test")
+  checkEq b.code, 0, "flow: собирается (" & b.output & ")"
+  if b.code == 0:
+    let r = run(b.exe, @[])
+    checkEq r.code, 0, "flow: exit code"
+
+block:
+  let b = buildFixture("flow_elif.conv", "flow_elif")
+  checkEq b.code, 0, "flow elif: собирается (" & b.output & ")"
+  if b.code == 0:
+    let r = run(b.exe, @[])
+    checkEq r.code, 0, "flow elif: exit code"
+
+# ---------------------------------------------------------------- e2e: sockets
+let socketPositives = [
+  ("sockets_echo.conv", "sockets_echo", "sockets-echo-ok\n"),
+  ("sockets_multi.conv", "sockets_multi", "sockets-multi-ok\n"),
+  ("sockets_eof.conv", "sockets_eof", "sockets-eof-ok\n"),
+  ("sockets_listen.conv", "sockets_listen", "sockets-listen-ok\n"),
+]
+
+for item in socketPositives:
+  let b = buildFixture(item[0], item[1])
+  checkEq b.code, 0, item[0] & ": собирается (" & b.output & ")"
+  if b.code == 0:
+    let r = run(b.exe, @[])
+    checkEq r.code, 0, item[0] & ": exit code"
+    checkEq r.output, item[2], item[0] & ": stdout"
+
+let socketNegatives = [
+  ("sockets_refused.conv", "sockets_refused", 1, "error[6]"),
+  ("sockets_bad_host.conv", "sockets_bad_host", 1, "error[3]"),
+]
+
+for item in socketNegatives:
+  let b = buildFixture(item[0], item[1])
+  checkEq b.code, 0, item[0] & ": собирается (" & b.output & ")"
+  if b.code == 0:
+    let r = run(b.exe, @[])
+    checkEq r.code, item[2], item[0] & ": exit code"
+    check item[3] in r.output, item[0] & ": ожидался " & item[3]
+
+for ex in ["echo_server.conv", "echo_client.conv"]:
+  let b = run(cvn, @["build", root / "examples" / ex,
+                     "-o", tmp / ex.splitFile.name,
+                     "--path=" & stdlib, "--runtime-path=" & runtime])
+  checkEq b.code, 0, "sockets: пример " & ex & " собирается (" & b.output & ")"
+
 # ---------------------------------------------------------------- e2e: version
 block:
   let r = run(cvn, @["version"])
   checkEq r.code, 0, "version: exit code"
-  check "0.9.0" in r.output, "version: номер версии"
+  check "0.10.0" in r.output, "version: номер версии"
 
 if failures > 0:
   echo "\n", failures, " проверок провалено"

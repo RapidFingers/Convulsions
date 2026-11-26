@@ -282,10 +282,11 @@ $ ./build/server-fiber --listen :7777
 | builtins | `taskAllocator`, `currentExecutor`, `panic`, `assert`, `unreachable`, `abort`, `sizeof`, `alignof`, `offsetof`, `deinit` | всегда, импорт не нужен |
 | `core/mem` | `Allocator`, `nullAllocator`, `cAllocator`, `pageAllocator`, `fixedAllocator`, `arenaAllocator`, `stackAllocator`, `taskAllocator`, `initDebug`, байтовые `alloc*/free*` | есть в 0.9.0 |
 | `core/seq` | `newSeq`, `seqOf`, `dupe`, `add`, `setLen`, `toSlice` | есть в 0.9.0 |
-| `core/string` | `concat`, `dupe`, `find`, `split`, `runeAt`, `runeOffset`, `runeLen`, `runes`, `validate`, `rune`, `fromRune` | есть в 0.9.0 |
+| `core/string` | `concat`, `dupe`, `find`, `split`, `runeAt`, `runeOffset`, `runeLen`, `runes`, `validate`, `rune`, `fromRune`, `equal` | есть в 0.9.0 |
 | `core/error` | `ErrorCode`, `error`, `errorMessage`, `errorString` | есть в 0.9.0 |
 | `core/io` | `Fd`, `readFull`, `writeAll`, `println`, `listen`, `accept`, `close` | 0.9.0 (IOCP/epoll — M4) |
-| `core/concurrency` | `Task`, `Executor`-реализации, `Channel`, `Mutex`, `Select`, `parallel`, `withScope`, `spawnBlocking` | 0.9.0, кроме `Select` (v0.7) |
+| `core/net` | `Socket`, `listen`, `accept`, `connect`, `read`, `readInto`, `write`, `writeBytes`, `close`, `localPort` | v0.10, TCP IPv4 поверх fiber |
+| `core/concurrency` | `sleep`, `Task`, `Executor`-реализации, `Channel`, `Mutex`, `Select`, `parallel`, `withScope`, `spawnBlocking` | 0.9.0, кроме `Select` (v0.7) |
 | `core/handle` | `GcHandle` (тип без GC-кода), упаковка `index << 32 \| gen` | v0.8 |
 | `core/gc` | `gcAllocator`, `gcHandle`, `gcRelease`, `gcDeref`, `gcAttachThread`, `gcDetachThread`, `foreignToException` | v0.8 |
 | `core/http` | `get`, `post`, `Server` | будет в v0.8 |
@@ -1021,8 +1022,8 @@ proc taskAllocator*(): Allocator
   вызванный из `user` с этим аллокатором, обязан освобождать явно — GC не «подберёт».
 - Аллокатор задачи нельзя сохранять в глобальную переменную и использовать после
   завершения задачи: это UAF. Проверок нет.
-- В v0.9 исполнитель `fiber` уже есть, но `taskAllocator()` всё ещё возвращает
-  `cAllocator()`: per-task арены появятся вместе с сокетами и scope-задачами.
+- В v0.10 сокеты уже есть, но `taskAllocator()` всё ещё возвращает
+  `cAllocator()`: per-task арены появятся вместе со scope-задачами и отменой.
   До этого `taskAllocator` — обычная функция `core/mem`, а не builtin.
 
 ### 3.9 Опасные места и что делать
@@ -1095,6 +1096,14 @@ C-библиотеки; OS-поток — наоборот. Если бы фиб
 `thread`-исполнителя, каналов/отмены и per-task арен; задачa исполняется на
 одном воркере после старта. Публичные сокеты — следующий милстоун поверх
 `cvn_task_wait_fd`.
+
+Реализация v0.10: `if/elif/else`, `while`, `break/continue`, `true/false`;
+`core/net` даёт TCP IPv4 `Socket` (`listen/accept/connect/read/readInto/write/
+writeBytes/close/localPort`). Сокеты nonblocking и паркуют фибру в event loop;
+сервер делает `spawn handle(conn)` и обрабатывает клиентов параллельно.
+Ограничения: нет DNS/IPv6/UDP/TLS, одна незавершённая операция на сокет,
+`close` во время ожидания не поддержан, `defer` внутри `if`/`while` запрещён.
+Спецификационные имена `core/io` (`listen`/`accept`) в MVP живут в `core/net`.
 
 ### 4.1 Что именно является языком, а что библиотекой
 
@@ -2775,6 +2784,8 @@ _start → cvn_rt_init()
 | `E-SPAWN-CALL` | `spawn` не от вызова процедуры (конструктор/builtin/выражение) |
 | `E-SPAWN-RET` | процедура в `spawn` не возвращает `!T` |
 | `E-SPAWN-VAR` | `spawn` процедуры с `var`-параметром |
+| `E-LOOP-CONTROL` | `break`/`continue` вне `while` |
+| `E-DEFER-CONTROL` | `defer` внутри `if`/`while` |
 | `E-LEX-*` | `E-LEX-CHAR`, `E-LEX-STRING`, `E-LEX-NUMBER`, `E-LEX-ESCAPE`, `E-LEX-COMMENT` |
 | `E-LEX-UTF8` | исходник не является валидным UTF-8 |
 | `E-PRAGMA-UNSUPPORTED` | прагма не реализована в этой версии |

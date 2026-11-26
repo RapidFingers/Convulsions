@@ -1,0 +1,5 @@
+{.profile: kernel.}
+
+proc main(): !void =
+  while 1:
+    discard 1

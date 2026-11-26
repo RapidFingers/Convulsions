@@ -1,0 +1,7 @@
+{.profile: kernel.}
+
+proc main(): !void =
+  var n = 0
+  while n < 1:
+    defer: n = n + 1
+    n = n + 1

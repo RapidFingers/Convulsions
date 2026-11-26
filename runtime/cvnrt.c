@@ -77,6 +77,16 @@ void cvn_str_deinit(cvn_string *s) {
   memset(s, 0, sizeof *s);
 }
 
+bool cvn_str_equal(cvn_string x, cvn_string y) {
+  if (x.len != y.len)
+    return false;
+  if (x.len == 0)
+    return true;
+  if (x.ptr == NULL || y.ptr == NULL)
+    return false;
+  return memcmp(x.ptr, y.ptr, (size_t)x.len) == 0;
+}
+
 /* ---------------------------------------------------------------- UTF-8 --- */
 
 static bool cvn_rune_is_scalar(uint32_t r) {

@@ -1,0 +1,42 @@
+{.profile: kernel.}
+import core/net
+import core/concurrency
+import core/mem
+import core/string
+import core/io
+
+proc handle(c: Socket): !void =
+  defer: c.close()
+  let a = taskAllocator()
+  let buf = try allocBytes(a, 256)
+  defer: freeBytes(a, buf, 256)
+  let n = try readInto(c, buf, 256)
+  if n > 0:
+    try writeBytes(c, buf, n)
+
+proc server(l: Socket): !void =
+  var n = 0
+  while n < 2:
+    n = n + 1
+    let c = try l.accept()
+    discard spawn handle(c)
+
+proc client(port: int): !void =
+  let s = try connect("127.0.0.1", port)
+  defer: s.close()
+  try write(s, "ping")
+  let a = taskAllocator()
+  let got = try read(s, a, 256)
+  defer: got.deinit()
+  assert(equal(got, "ping"))
+
+proc main(): !void =
+  let l = try listen("127.0.0.1", 0)
+  defer: l.close()
+  let srv = spawn server(l)
+  let c1 = spawn client(l.localPort())
+  let c2 = spawn client(l.localPort())
+  try await c1
+  try await c2
+  try await srv
+  try println("sockets-multi-ok")

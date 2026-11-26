@@ -9,7 +9,8 @@ type
     nkBlock, nkLet, nkVar, nkDefer, nkReturn, nkDiscard, nkCall, nkField,
     nkIdent, nkIntLit, nkStrLit, nkCharLit, nkUnary, nkBinary, nkTry,
     nkTypeName, nkPtrType, nkResultType, nkFieldDecl, nkNamedField, nkAssign,
-    nkDeref, nkTypeApply, nkSpawn, nkAwait
+    nkDeref, nkTypeApply, nkSpawn, nkAwait, nkBoolLit, nkIf, nkWhile,
+    nkBreak, nkContinue
 
   AstNode* = ref object
     line*: int
@@ -99,6 +100,17 @@ type
       spawnCall*: AstNode
     of nkAwait:
       awaitTask*: AstNode
+    of nkBoolLit:
+      boolVal*: bool
+    of nkIf:
+      cond*: AstNode
+      thenBody*: AstNode
+      elseBody*: AstNode
+    of nkWhile:
+      whileCond*: AstNode
+      whileBody*: AstNode
+    of nkBreak, nkContinue:
+      discard
 
 proc newNode*(kind: NodeKind; line, col: int): AstNode =
   AstNode(kind: kind, line: line, col: col)
@@ -177,6 +189,15 @@ proc dumpAst*(n: AstNode; indent = 0): string =
     result.add dumpAst(n.spawnCall, indent + 1)
   of nkAwait:
     result.add dumpAst(n.awaitTask, indent + 1)
+  of nkBoolLit:
+    result.add(if n.boolVal: " true" else: " false")
+  of nkIf:
+    result.add dumpAst(n.cond, indent + 1)
+    result.add dumpAst(n.thenBody, indent + 1)
+    result.add dumpAst(n.elseBody, indent + 1)
+  of nkWhile:
+    result.add dumpAst(n.whileCond, indent + 1)
+    result.add dumpAst(n.whileBody, indent + 1)
   of nkTypeApply:
     for a in n.appliedArgs:
       result.add dumpAst(a, indent + 1)
@@ -273,3 +294,14 @@ proc cloneAst*(n: AstNode): AstNode =
     result.spawnCall = cloneAst(n.spawnCall)
   of nkAwait:
     result.awaitTask = cloneAst(n.awaitTask)
+  of nkBoolLit:
+    result.boolVal = n.boolVal
+  of nkIf:
+    result.cond = cloneAst(n.cond)
+    result.thenBody = cloneAst(n.thenBody)
+    result.elseBody = cloneAst(n.elseBody)
+  of nkWhile:
+    result.whileCond = cloneAst(n.whileCond)
+    result.whileBody = cloneAst(n.whileBody)
+  of nkBreak, nkContinue:
+    discard

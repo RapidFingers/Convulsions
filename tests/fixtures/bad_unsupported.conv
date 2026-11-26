@@ -1,4 +1,4 @@
 {.profile: kernel.}
 proc main(): !void =
-  if true:
-    discard 1
+  for x in 1:
+    discard x

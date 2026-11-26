@@ -1,0 +1,13 @@
+{.profile: kernel.}
+import core/net
+import core/mem
+import core/io
+
+proc main(): !void =
+  let a = taskAllocator()
+  let s = try connect("127.0.0.1", 7700)
+  defer: s.close()
+  try write(s, "hello")
+  let got = try read(s, a, 4096)
+  defer: got.deinit()
+  try println(got)

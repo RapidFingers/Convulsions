@@ -1,0 +1,23 @@
+{.profile: kernel.}
+import core/net
+import core/concurrency
+import core/mem
+import core/io
+
+proc handle(c: Socket): !void =
+  defer: c.close()
+  let a = taskAllocator()
+  let buf = try allocBytes(a, 4096)
+  defer: freeBytes(a, buf, 4096)
+  while true:
+    let n = try readInto(c, buf, 4096)
+    if n == 0:
+      break
+    try writeBytes(c, buf, n)
+
+proc main(): !void =
+  let l = try listen("0.0.0.0", 7700)
+  try println("echo server on 127.0.0.1:7700")
+  while true:
+    let c = try l.accept()
+    discard spawn handle(c)

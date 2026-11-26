@@ -1,10 +1,11 @@
-# Convulsions MVP (v0.9): kernel, UTF-8, объекты, аллокаторы, generics, fibers
+# Convulsions MVP (v0.10): kernel, UTF-8, объекты, аллокаторы, generics, fibers, sockets
 
 Минимальный компилятор языка Convulsions: профиль `kernel`, бэкенд `native`
 (HIR → C11 → gcc). Реализует hello world, UTF-8-модель `string` (README §6.7),
 value-объекты и их аллокацию в куче (§6.2, §3.6), аллокаторы (§3.2–3.8),
-отчёт об утечках с типом и `file:line`, мономорфизируемые дженерики (§6.3)
-и `spawn`/`await` под исполнителем `fiber` с пулом воркеров и event loop (§4).
+отчёт об утечках с типом и `file:line`, мономорфизируемые дженерики (§6.3),
+`spawn`/`await` под исполнителем `fiber` с пулом воркеров и event loop (§4)
+и TCP-сокеты поверх фибр.
 Спецификация языка — [../README.md](../README.md).
 
 ## Сборка и запуск
@@ -26,6 +27,11 @@ generics ok
 $ bin/cvn run examples/fibers.conv
 fibers ok
 $ bin/cvn build examples/fibers.conv --workers=1 -o build/fibers1
+
+$ bin/cvn build examples/echo_server.conv -o build/echo_server
+$ build/echo_server        # слушает 127.0.0.1:7700
+$ bin/cvn run examples/echo_client.conv
+hello
 ```
 
 `stdlib` и `runtime` ищутся рядом с бинарником (`bin/../stdlib`,
@@ -43,6 +49,8 @@ $ bin/cvn build examples/fibers.conv --workers=1 -o build/fibers1
 | Отладка утечек | тип и `file:line` для `create`, `debugReport`, автоотчёт на exit, `CVN_DEBUG_FAIL_ON_LEAK=1` |
 | Дженерики | `[T]` у типов/процедур, `Box[int]`, вывод и явная конкретизация, вложенность, `create(Box[int])` |
 | Fibers | `spawn f(args)`, `await t`, `sleep(ms)`, пул воркеров, event loop, `--workers`, `--stack-size` |
+| Control flow | `if/elif/else`, `while`, `break`, `continue`, `true/false` |
+| Сокеты | `core/net`: `Socket`, `listen/accept/connect/read/readInto/write/writeBytes/close/localPort`, TCP IPv4 |
 | Аллокаторы | `null/c/page/fixed/arena/stack/task`, `initDebug`, байтовые `alloc/free/realloc`, `memFill/memByte/...` |
 | Выражения | имена, вызовы, UFCS, `try`, `-`, `not`, арифметика, сравнения скаляров, `s.len`, `sizeof/alignof/offsetof`, `T(x)` |
 | Операторы | `let`, `var`, `return`, `discard`, `defer:`, `try`, `assert(cond[, "msg"])`, присваивание `lhs = expr` |
@@ -54,11 +62,11 @@ $ bin/cvn build examples/fibers.conv --workers=1 -o build/fibers1
 `E-DUP-SYMBOL`; приватные имена не импортируются. Все примеры используют
 `import`.
 
-Не поддерживается (ошибка `E-UNSUPPORTED` с версией): `if/while/for`,
+Не поддерживается (ошибка `E-UNSUPPORTED` с версией): `for`,
 `catch:`/`errdefer`, `seq`, `union`/`enum`/`distinct`, `class`/`interface`,
-`spawn`, `runes`, срезы строк, `addr`/`p[i]`, `nil`, `alloc[T]` для массивов,
-constraints/`static`-параметры, `{.packed.}`/`{.align.}`, сравнение объектов
-и строк, `user`-профиль, VM.
+`runes`, срезы строк, `addr`/`p[i]`, `nil`, `alloc[T]` для массивов,
+constraints/`static`-параметры, UDP/IPv6/DNS/TLS, `{.packed.}`/`{.align.}`,
+сравнение объектов и строк, `user`-профиль, VM.
 
 ## Аллокаторы
 
@@ -252,6 +260,47 @@ preemption, `thread`-исполнителя, каналов/мьютексов/�
 завершения программы. Программы без `spawn`/`await` не запускают потоки.
 Сетевые сокеты — следующий милстоун поверх event loop.
 
+## Сокеты
+
+TCP IPv4 поверх `fiber`: все ожидания (`accept`, `connect`, `read`, `write`)
+паркуют текущую фибру; event loop пробуждает её по готовности fd. Сервер
+принимает соединения в цикле и делает `spawn` на каждое — клиенты
+обрабатываются параллельно на пуле воркеров.
+
+```conv
+# сервер
+proc handle(c: Socket): !void =
+  defer: c.close()
+  let a = taskAllocator()
+  let buf = try allocBytes(a, 4096)
+  defer: freeBytes(a, buf, 4096)
+  while true:
+    let n = try readInto(c, buf, 4096)
+    if n == 0:
+      break
+    try writeBytes(c, buf, n)
+
+let l = try listen("0.0.0.0", 7700)
+while true:
+  let c = try l.accept()
+  discard spawn handle(c)
+
+# клиент
+let a = taskAllocator()
+let s = try connect("127.0.0.1", 7700)
+defer: s.close()
+try write(s, "hello")
+let got = try read(s, a, 4096)
+defer: got.deinit()
+```
+
+API: `listen(host, port)`, `accept`, `connect`, `read(s,a,max)`, `readInto`,
+`write`, `writeBytes`, `close`, `localPort`; `core/string.equal` сравнивает
+содержимое. IPv4 numeric и `localhost`; DNS/IPv6/UDP/TLS нет. `read` аллоцирует
+строку (нужен `deinit`), `readInto` пишет в буфер. Одна незавершённая операция
+на сокет; `close` во время ожидания не поддержан. В `if`/`while` нельзя
+`defer` (`E-DEFER-CONTROL`); в сервере defer — на уровне `handle`.
+
 ## UTF-8
 
 `len` — байты, `s[i]` — байт, NUL в конце; `validate` — строгая проверка;
@@ -289,8 +338,11 @@ runtime/cvnrt_alloc.c   аллокаторы, byte-API, debug, память
 - Дженерики: мономорфизация без constraints/`static`/частичного вывода;
   generic-процедура не является значением; перегрузки по типам нет.
 - Fibers: нет замыканий/захвата, preemption, `thread`-исполнителя, каналов,
-  отмены и per-task арен; сокеты — следующий милстоун; задачa не мигрирует
-  между воркерами; записи задач освобождаются только на shutdown.
+  отмены и per-task арен; задачa не мигрирует между воркерами; записи задач
+  освобождаются только на shutdown.
+- Сокеты: только TCP IPv4 (numeric/`localhost`), без DNS/IPv6/UDP/TLS; одна
+  незавершённая операция на сокет; `close` во время ожидания не поддержан;
+  `defer` внутри `if`/`while` запрещён (`E-DEFER-CONTROL`).
 - `runes`/`for`, срезы, `union`/`enum`, `addr`/`p[i]`, `nil`, `{.packed.}`,
   сравнение объектов и строк, debug-аллокатор по умолчанию не реализованы.
 
@@ -308,7 +360,11 @@ $ nimble test
   (`examples/leak_debug.conv`, `obj_leak_auto.conv`), `examples/allocators.conv`,
   import-all (`import m`), дженерики (`examples/generics.conv`,
   `generics_*.conv`), fibers (`examples/fibers.conv`, `fiber_*.conv`),
+  control flow (`flow_*.conv`), сокеты (`sockets_*.conv`,
+  `examples/echo_server.conv`, `examples/echo_client.conv`),
   `--emit-c` (детерминизм);
 - C-fiber: барьер автораспределения, вложенный await, таймеры, fd-readiness.
+- C-net: listen/accept/connect/read/write, EOF, connection refused, invalid
+  host/port/kind.
 - негативы: ошибки компилятора, OOM fixed, bad align, null allocator,
   stack LIFO, double free, неверный размер, redzone, утечка.

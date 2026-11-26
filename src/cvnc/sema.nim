@@ -31,6 +31,8 @@ type
     pending: seq[Symbol]
     typeEnv: Table[string, Type]
     monoDepth: int
+    loopDepth: int
+    controlDepth: int
 
 proc addSym(s: Sema; sym: Symbol): int =
   sym.id = s.prog.syms.len
@@ -924,6 +926,8 @@ proc analExpr(s: Sema; n: AstNode): Type =
     n.typ = s.builtins["string"]
   of nkCharLit:
     n.typ = s.builtins["char"]
+  of nkBoolLit:
+    n.typ = s.builtins["bool"]
   of nkIdent:
     let sym = s.lookup(n.name)
     if sym == nil:
@@ -1101,7 +1105,39 @@ proc analStmt(s: Sema; n: AstNode) =
     s.define(sym)
     n.symId = sym.id
     n.typ = typ
+  of nkIf:
+    let condType = s.analExpr(n.cond)
+    if condType.kind != tyBool:
+      fail("E-TYPE", s.curMod.file, n.cond.line, n.cond.col,
+           "if требует bool, получен " & typeName(condType))
+    inc s.controlDepth
+    s.analStmt(n.thenBody)
+    if n.elseBody != nil:
+      s.analStmt(n.elseBody)
+    dec s.controlDepth
+    n.typ = s.builtins["void"]
+  of nkWhile:
+    let condType = s.analExpr(n.whileCond)
+    if condType.kind != tyBool:
+      fail("E-TYPE", s.curMod.file, n.whileCond.line, n.whileCond.col,
+           "while требует bool, получен " & typeName(condType))
+    inc s.loopDepth
+    inc s.controlDepth
+    s.analStmt(n.whileBody)
+    dec s.controlDepth
+    dec s.loopDepth
+    n.typ = s.builtins["void"]
+  of nkBreak, nkContinue:
+    if s.loopDepth == 0:
+      fail("E-LOOP-CONTROL", s.curMod.file, n.line, n.col,
+           (if n.kind == nkBreak: "break" else: "continue") &
+           " допустим только внутри while")
+    n.typ = s.builtins["void"]
   of nkDefer:
+    if s.controlDepth > 0:
+      fail("E-DEFER-CONTROL", s.curMod.file, n.line, n.col,
+           "defer внутри if/while не поддерживается",
+           "вынесите defer на уровень процедуры")
     inc s.inDefer
     s.analStmt(n.deferBody)
     dec s.inDefer
@@ -1183,6 +1219,8 @@ proc analyzeProcBody(s: Sema; sym: Symbol) =
            "повторяющийся параметр: " & ps.name)
     s.scopes[^1].define(ps)
   s.inDefer = 0
+  s.loopDepth = 0
+  s.controlDepth = 0
   let oldDepth = s.monoDepth
   s.monoDepth = sym.monoDepth
   s.analStmt(sym.node.body)

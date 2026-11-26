@@ -14,6 +14,8 @@ type
     labelSeq: int
     curFile: string
     spawnSeq: int
+    breakLabels: seq[int]
+    continueLabels: seq[int]
 
 proc newSlot(l: Lower; t: Type): int =
   result = l.slots.len
@@ -85,6 +87,12 @@ proc lowerExpr(l: Lower; n: AstNode): int =
     var ins = newInstr(hiConstInt)
     ins.dst = result
     ins.imm = int64(n.charVal)
+    l.emit(ins)
+  of nkBoolLit:
+    result = l.newSlot(n.typ)
+    var ins = newInstr(hiConstInt)
+    ins.dst = result
+    ins.imm = (if n.boolVal: 1 else: 0)
     l.emit(ins)
   of nkStrLit:
     result = l.newSlot(n.typ)
@@ -346,6 +354,54 @@ proc lowerStmt(l: Lower; n: AstNode) =
     ins.a = src
     l.emit(ins)
     l.symSlots[n.symId] = dst
+  of nkIf:
+    let elseL = l.newLabel()
+    let endL = l.newLabel()
+    let cond = l.lowerExpr(n.cond)
+    var j = newInstr(hiJmpIfFalse)
+    j.a = cond
+    j.label = elseL
+    l.emit(j)
+    l.lowerStmt(n.thenBody)
+    var je = newInstr(hiJmp)
+    je.label = endL
+    l.emit(je)
+    l.emit(newInstr(hiLabel).withLabel(elseL))
+    if n.elseBody != nil:
+      l.lowerStmt(n.elseBody)
+    l.emit(newInstr(hiLabel).withLabel(endL))
+  of nkWhile:
+    let startL = l.newLabel()
+    let endL = l.newLabel()
+    l.emit(newInstr(hiLabel).withLabel(startL))
+    let cond = l.lowerExpr(n.whileCond)
+    var j = newInstr(hiJmpIfFalse)
+    j.a = cond
+    j.label = endL
+    l.emit(j)
+    l.breakLabels.add endL
+    l.continueLabels.add startL
+    l.lowerStmt(n.whileBody)
+    discard l.breakLabels.pop()
+    discard l.continueLabels.pop()
+    var jb = newInstr(hiJmp)
+    jb.label = startL
+    l.emit(jb)
+    l.emit(newInstr(hiLabel).withLabel(endL))
+  of nkBreak:
+    if l.breakLabels.len == 0:
+      fail("E-INTERNAL", l.prog.entry.file, n.line, n.col,
+           "break без цикла")
+    var j = newInstr(hiJmp)
+    j.label = l.breakLabels[^1]
+    l.emit(j)
+  of nkContinue:
+    if l.continueLabels.len == 0:
+      fail("E-INTERNAL", l.prog.entry.file, n.line, n.col,
+           "continue без цикла")
+    var j = newInstr(hiJmp)
+    j.label = l.continueLabels[^1]
+    l.emit(j)
   of nkDefer:
     let bodyInstrs = l.capture(n.deferBody)
     l.cleanups[^1].add bodyInstrs
@@ -413,6 +469,8 @@ proc lowerProc(l: Lower; sym: Symbol): HirProc =
   var empty: seq[seq[HirInstr]] = @[]
   l.cleanups = @[empty]
   l.labelSeq = 0
+  l.breakLabels = @[]
+  l.continueLabels = @[]
 
   for ps in sym.paramSyms:
     let slot =

@@ -1,0 +1,30 @@
+{.profile: kernel.}
+import core/net
+import core/concurrency
+import core/mem
+import core/string
+import core/io
+
+proc serve(l: Socket): !void =
+  let c = try l.accept()
+  defer: c.close()
+  let a = taskAllocator()
+  let buf = try allocBytes(a, 256)
+  defer: freeBytes(a, buf, 256)
+  let n = try readInto(c, buf, 256)
+  if n > 0:
+    try writeBytes(c, buf, n)
+
+proc main(): !void =
+  let l = try listen("127.0.0.1", 0)
+  defer: l.close()
+  let srv = spawn serve(l)
+  let s = try connect("127.0.0.1", l.localPort())
+  defer: s.close()
+  try write(s, "echo!")
+  let a = taskAllocator()
+  let got = try read(s, a, 256)
+  defer: got.deinit()
+  assert(equal(got, "echo!"))
+  try await srv
+  try println("sockets-echo-ok")

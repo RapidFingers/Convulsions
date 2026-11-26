@@ -1,0 +1,6 @@
+{.profile: kernel.}
+import core/net
+
+proc main(): !void =
+  let l = try listen("not-an-ip", 0)
+  l.close()
