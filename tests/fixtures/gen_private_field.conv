@@ -1,0 +1,6 @@
+{.profile: kernel.}
+import gmod/lib
+
+proc main(): !void =
+  let s = Secret[int](value: 1, hidden: 2)
+  discard s.value

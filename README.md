@@ -1842,6 +1842,13 @@ type
 - Размер кода — цена мономорфизации: `Table[string, int]` и `Table[string, string]`
   дают два независимых набора функций. `cvn size --by-mono` показывает вклад.
 
+Реализация v0.8: мономорфизация параметрических `object` и процедур с `[T, U]`,
+вывод типов из аргументов/полей и явная конкретизация (`f[int](...)`,
+`Box[int](...)`); кэш инстанцирований и лимит глубины 64. Ограничения
+(`[T: Concept]`), `static`-параметры и частичный вывод пока не поддерживаются
+(`E-UNSUPPORTED`/`E-GENERIC-ARG-COUNT`); generic-процедура как значение
+запрещена (`E-GENERIC-VALUE`).
+
 ### 6.4 Concepts
 
 ```conv
@@ -2750,6 +2757,12 @@ _start → cvn_rt_init()
 | `E-IMMUTABLE` | изменение `let`/value-параметра или передача в `var`-параметр |
 | `E-DUP-FIELD` | повтор поля в типе или конструкторе |
 | `E-FIELD` | неизвестное поле |
+| `E-GENERIC-NEEDS-ARGS` | generic-тип без аргументов |
+| `E-GENERIC-ARG-COUNT` | неверное число аргументов типа / частичный вывод |
+| `E-GENERIC-CANNOT-INFER` | не удалось вывести параметры типа |
+| `E-GENERIC-VALUE` | generic-процедура/тип как значение |
+| `E-GENERIC-NOT-GENERIC` | `[T]` у не-generic объявления |
+| `E-MONO-DEPTH` | превышена глубина мономорфизации (64) |
 | `E-LEX-*` | `E-LEX-CHAR`, `E-LEX-STRING`, `E-LEX-NUMBER`, `E-LEX-ESCAPE`, `E-LEX-COMMENT` |
 | `E-LEX-UTF8` | исходник не является валидным UTF-8 |
 | `E-PRAGMA-UNSUPPORTED` | прагма не реализована в этой версии |

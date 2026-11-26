@@ -67,7 +67,7 @@ proc skipNewlines(p: var Parser) =
 
 proc unsupported(p: Parser; what, version: string) {.noreturn.} =
   p.failTok("E-UNSUPPORTED",
-            what & " не поддерживается в v0.5 (будет в " & version & ")",
+            what & " не поддерживается в v0.8 (будет в " & version & ")",
             "см. README и docs/MVP.md")
 
 proc versionFor(kw: Keyword): string =
@@ -160,6 +160,29 @@ proc parseImport(p: var Parser): AstNode =
 proc parseTypeExpr(p: var Parser): AstNode
 proc parseStmt(p: var Parser): AstNode
 
+proc parseGenericParams(p: var Parser; what: string): seq[string] =
+  if not p.at(tkLBracket):
+    return
+  discard p.advance()
+  if p.at(tkRBracket):
+    p.failTok("E-PARSE", "пустой список параметров " & what)
+  while true:
+    if not p.at(tkIdent):
+      p.failTok("E-PARSE", "ожидалось имя параметра " & what)
+    let nt = p.cur
+    discard p.advance()
+    if p.at(tkColon):
+      p.unsupported("ограничение generic-параметра", "v0.9")
+    if nt.text in result:
+      p.failTok("E-DUP-SYMBOL", "повторяющийся параметр " & what &
+                ": " & nt.text)
+    result.add nt.text
+    if p.at(tkComma):
+      discard p.advance()
+      continue
+    break
+  discard p.expect(tkRBracket, "]")
+
 proc parseTypeBody(p: var Parser): AstNode =
   if not p.at(tkIdent):
     p.failTok("E-PARSE", "ожидалось имя типа")
@@ -167,6 +190,7 @@ proc parseTypeBody(p: var Parser): AstNode =
   let name = nt.text
   discard p.advance()
   let exported = p.accept(tkStar)
+  let gparams = p.parseGenericParams("типа")
   var pragmas: seq[AstNode]
   while p.at(tkPragmaOpen):
     pragmas.add p.parsePragmaBlock()
@@ -216,6 +240,7 @@ proc parseTypeBody(p: var Parser): AstNode =
   result.exportedDecl = exported
   result.declPragmas = pragmas
   result.typeFields = fields
+  result.genericParams = gparams
 
 proc parseTypeSection(p: var Parser): seq[AstNode] =
   discard p.advance() # type
@@ -251,10 +276,25 @@ proc parseTypeExpr(p: var Parser): AstNode =
   elif p.at(tkIdent):
     let t = p.cur
     discard p.advance()
+    var args: seq[AstNode]
     if p.at(tkLBracket):
-      p.unsupported("обобщённый тип", "v0.3")
-    result = newNode(nkTypeName, t.line, t.col)
-    result.typeName = t.text
+      discard p.advance()
+      if p.at(tkRBracket):
+        p.failTok("E-PARSE", "пустой список аргументов типа")
+      while true:
+        args.add p.parseTypeExpr()
+        if p.at(tkComma):
+          discard p.advance()
+          continue
+        break
+      discard p.expect(tkRBracket, "]")
+    if args.len > 0:
+      result = newNode(nkTypeApply, t.line, t.col)
+      result.appliedName = t.text
+      result.appliedArgs = args
+    else:
+      result = newNode(nkTypeName, t.line, t.col)
+      result.typeName = t.text
   else:
     p.failTok("E-PARSE", "ожидался тип")
 
@@ -305,8 +345,7 @@ proc parseProc(p: var Parser): AstNode =
   let name = nameTok.text
   discard p.advance()
   let exported = p.accept(tkStar)
-  if p.at(tkLBracket):
-    p.unsupported("обобщённая процедура", "v0.3")
+  let gparams = p.parseGenericParams("процедуры")
   discard p.expect(tkLParen, "(")
   var params: seq[AstNode]
   if not p.at(tkRParen):
@@ -348,6 +387,7 @@ proc parseProc(p: var Parser): AstNode =
   result.retTypeNode = retType
   result.body = body
   result.procPragmas = pragmas
+  result.genericParams = gparams
 
 proc parseExpr(p: var Parser): AstNode
 proc parseUnary(p: var Parser): AstNode
@@ -410,6 +450,7 @@ proc parseUnary(p: var Parser): AstNode =
 
 proc parsePostfix(p: var Parser): AstNode =
   result = p.parseAtom()
+  var pendingTypeArgs: seq[AstNode]
   while true:
     if p.at(tkLParen):
       let t = p.cur
@@ -439,6 +480,9 @@ proc parsePostfix(p: var Parser): AstNode =
       var call = newNode(nkCall, t.line, t.col)
       call.callee = result
       call.args = args
+      if pendingTypeArgs.len > 0:
+        call.genericArgs = pendingTypeArgs
+        pendingTypeArgs = @[]
       result = call
     elif p.at(tkDot):
       let t = p.cur
@@ -460,7 +504,26 @@ proc parsePostfix(p: var Parser): AstNode =
         d.derefObj = result
         result = d
       else:
-        p.unsupported("индексация p[i]", "v0.6")
+        if result.kind != nkIdent:
+          p.unsupported("generic-выражение", "v0.9")
+        if not (p.at(tkIdent) or p.atOp("!") or p.atKw(kwPtr) or
+                p.atKw(kwVoid)):
+          p.unsupported("индексация p[i]", "v0.6")
+        var args: seq[AstNode]
+        while true:
+          args.add p.parseTypeExpr()
+          if p.at(tkComma):
+            discard p.advance()
+            continue
+          break
+        discard p.expect(tkRBracket, "]")
+        if p.at(tkLParen):
+          pendingTypeArgs = args
+        else:
+          var ta = newNode(nkTypeApply, t.line, t.col)
+          ta.appliedName = result.name
+          ta.appliedArgs = args
+          result = ta
     else:
       break
 

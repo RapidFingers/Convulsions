@@ -1,0 +1,10 @@
+{.profile: kernel.}
+import core/io
+
+proc plus[T](a: T, b: T): T =
+  return a + b
+
+proc main(): !void =
+  assert(plus(3, 4) == 7)
+  assert(3.plus(4) == 7)
+  try println("gen-ufcs-ok")

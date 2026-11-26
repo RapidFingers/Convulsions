@@ -1,0 +1,14 @@
+{.profile: kernel.}
+import core/io
+
+type
+  Wrapper* = object
+    inner*: Box[int]
+  Box*[T] = object
+    value*: T
+
+proc main(): !void =
+  let w = Wrapper(inner: Box[int](value: 3))
+  assert(w.inner.value == 3)
+  assert(sizeof(Wrapper) == sizeof(Box[int]))
+  try println("gen-field-ok")

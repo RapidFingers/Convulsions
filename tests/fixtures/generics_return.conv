@@ -1,0 +1,16 @@
+{.profile: kernel.}
+import core/io
+
+type
+  Box*[T] = object
+    value*: T
+
+proc make[T](v: T): !Box[T] =
+  return Box[T](value: v)
+
+proc main(): !void =
+  let b = try make(9)
+  assert(b.value == 9)
+  let s = try make("hi")
+  assert(s.value.len == 2)
+  try println("gen-return-ok")

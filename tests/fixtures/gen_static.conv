@@ -1,0 +1,7 @@
+{.profile: kernel.}
+
+proc f[N: static int](x: int): int =
+  return x
+
+proc main(): !void =
+  discard f(1)

@@ -26,6 +26,11 @@ type
     builtinSizes: Table[string, Symbol]
     builtinCreate: Symbol
     builtinDestroy: Symbol
+    typeCache: Table[string, Type]
+    procCache: Table[string, Symbol]
+    pending: seq[Symbol]
+    typeEnv: Table[string, Type]
+    monoDepth: int
 
 proc addSym(s: Sema; sym: Symbol): int =
   sym.id = s.prog.syms.len
@@ -86,9 +91,19 @@ proc validatePragmas(s: Sema; pragmas: seq[AstNode]; allowed: seq[string];
            " не поддерживается в v0.1",
            "допустимы: " & allowed.join(", "))
 
+proc typeFromNode(s: Sema; n: AstNode): Type
+
+proc instantiateType(s: Sema; tmpl: Symbol; args: seq[Type];
+                     where: AstNode): Type
+
+proc resolveFieldsInto(s: Sema; t: Type; fieldNodes: seq[AstNode];
+                       where: AstNode)
+
 proc typeFromNode(s: Sema; n: AstNode): Type =
   case n.kind
   of nkTypeName:
+    if s.typeEnv.hasKey(n.typeName):
+      return s.typeEnv[n.typeName]
     if s.builtins.hasKey(n.typeName):
       return s.builtins[n.typeName]
     let sym = s.curMod.scope.lookup(n.typeName)
@@ -98,7 +113,31 @@ proc typeFromNode(s: Sema; n: AstNode): Type =
     if sym.kind != skType:
       fail("E-TYPE", s.curMod.file, n.line, n.col,
            "'" & n.typeName & "' не является типом")
+    if sym.typ.isGeneric:
+      fail("E-GENERIC-NEEDS-ARGS", s.curMod.file, n.line, n.col,
+           "generic-типу '" & n.typeName & "' нужны аргументы типа",
+           "например: " & n.typeName & "[int]")
     sym.typ
+  of nkTypeApply:
+    let sym = s.curMod.scope.lookup(n.appliedName)
+    if sym == nil:
+      fail("E-UNDEF", s.curMod.file, n.line, n.col,
+           "неизвестный тип: " & n.appliedName)
+    if sym.kind != skType:
+      fail("E-TYPE", s.curMod.file, n.line, n.col,
+           "'" & n.appliedName & "' не является типом")
+    if not sym.typ.isGeneric:
+      fail("E-GENERIC-NOT-GENERIC", s.curMod.file, n.line, n.col,
+           "'" & n.appliedName & "' не является generic-типом")
+    if n.appliedArgs.len != sym.typ.genericParams.len:
+      fail("E-GENERIC-ARG-COUNT", s.curMod.file, n.line, n.col,
+           "тип '" & n.appliedName & "' ожидает " &
+           $sym.typ.genericParams.len & " аргумент(ов), получено " &
+           $n.appliedArgs.len)
+    var args: seq[Type]
+    for a in n.appliedArgs:
+      args.add s.typeFromNode(a)
+    s.instantiateType(sym, args, n)
   of nkPtrType:
     let inner = s.typeFromNode(n.elemType)
     let t = newType(tyPtr)
@@ -111,6 +150,55 @@ proc typeFromNode(s: Sema; n: AstNode): Type =
     t
   else:
     fail("E-PARSE", s.curMod.file, n.line, n.col, "ожидался тип")
+
+proc findModule(s: Sema; path: string): ModuleInfo =
+  for m in s.prog.modules:
+    if m.path == path:
+      return m
+  nil
+
+proc instantiateType(s: Sema; tmpl: Symbol; args: seq[Type];
+                     where: AstNode): Type =
+  if not tmpl.typ.isGeneric:
+    fail("E-GENERIC-NOT-GENERIC", s.curMod.file, where.line, where.col,
+         "'" & tmpl.name & "' не является generic-типом")
+  if args.len != tmpl.typ.genericParams.len:
+    fail("E-GENERIC-ARG-COUNT", s.curMod.file, where.line, where.col,
+         "тип '" & tmpl.name & "' ожидает " &
+         $tmpl.typ.genericParams.len & " аргумент(ов), получено " &
+         $args.len)
+  let key = $tmpl.id & "|" & typeArgsKey(args)
+  if s.typeCache.hasKey(key):
+    return s.typeCache[key]
+  var names: seq[string]
+  for a in args:
+    names.add typeName(a)
+  let t = newType(tyObject, tmpl.name & "[" & names.join(", ") & "]")
+  t.ownerModule = tmpl.modulePath
+  t.templateId = tmpl.id
+  t.typeArgs = args
+  t.declLine = where.line
+  t.declCol = where.col
+  t.declFile = s.curMod.file
+  t.cname = "cvn_m_" & cSanitize(tmpl.modulePath) & "_" &
+            cSanitize(tmpl.name) & "_g_" & cSanitize(typeArgsKey(args))
+  s.typeCache[key] = t
+  let owner = s.findModule(tmpl.modulePath)
+  if owner == nil:
+    fail("E-INTERNAL", s.curMod.file, where.line, where.col,
+         "модуль шаблона не найден: " & tmpl.modulePath)
+  let oldMod = s.curMod
+  let oldEnv = s.typeEnv
+  s.curMod = owner
+  var env = initTable[string, Type]()
+  for i, p in tmpl.typ.genericParams:
+    env[p] = args[i]
+  s.typeEnv = env
+  s.resolveFieldsInto(t, tmpl.node.typeFields, where)
+  s.curMod = oldMod
+  s.typeEnv = oldEnv
+  s.prog.objectTypes.add t
+  t
 
 proc fieldIndex(t: Type; name: string): int =
   if t.isNil:
@@ -135,6 +223,8 @@ proc ptrResultType(t: Type): Type =
   r
 
 proc typeFromName(s: Sema; n: AstNode; what: string): Type =
+  if n.kind == nkTypeApply:
+    return s.typeFromNode(n)
   if n.kind != nkIdent:
     fail("E-TYPE", s.curMod.file, n.line, n.col,
          what & ": ожидалось имя типа")
@@ -144,6 +234,10 @@ proc typeFromName(s: Sema; n: AstNode; what: string): Type =
   if sym == nil or sym.kind != skType:
     fail("E-TYPE", s.curMod.file, n.line, n.col,
          what & ": неизвестный тип " & n.name)
+  if sym.typ.isGeneric:
+    fail("E-GENERIC-NEEDS-ARGS", s.curMod.file, n.line, n.col,
+         what & ": generic-типу '" & n.name & "' нужны аргументы",
+         "например: " & n.name & "[int]")
   sym.typ
 
 proc declareTypeShell(s: Sema; n: AstNode) =
@@ -154,7 +248,18 @@ proc declareTypeShell(s: Sema; n: AstNode) =
   let importC = pragmaVal(n.declPragmas, "importc")
   let t = newType(tyObject, n.declName)
   t.ownerModule = s.curMod.path
-  if importC.len > 0:
+  t.declLine = n.line
+  t.declCol = n.col
+  t.declFile = s.curMod.file
+  if n.genericParams.len > 0:
+    if importC.len > 0:
+      fail("E-UNSUPPORTED", s.curMod.file, n.line, n.col,
+           "importc-тип не может быть generic")
+    t.isGeneric = true
+    t.genericParams = n.genericParams
+    t.cname = "cvn_m_" & cSanitize(s.curMod.path) & "_" &
+              cSanitize(n.declName) & "_g_template"
+  elif importC.len > 0:
     t.cname = importC
     t.opaque = true
     n.importedDecl = true
@@ -163,25 +268,27 @@ proc declareTypeShell(s: Sema; n: AstNode) =
     t.cname = "cvn_m_" & cSanitize(s.curMod.path) & "_" &
               cSanitize(n.declName)
   let sym = Symbol(kind: skType, name: n.declName, typ: t, node: n,
-                   exported: n.exportedDecl, modulePath: s.curMod.path)
+                   exported: n.exportedDecl, modulePath: s.curMod.path,
+                   isGeneric: n.genericParams.len > 0,
+                   genericParams: n.genericParams)
   discard s.addSym(sym)
+  t.templateId = sym.id
   s.curMod.scope.define(sym)
   if n.exportedDecl:
     s.curMod.addExport(sym)
   n.symId = sym.id
   s.curMod.addHeader(pragmaVal(n.declPragmas, "header"))
+  if not t.opaque and not t.isGeneric:
+    s.prog.objectTypes.add t
 
-proc resolveTypeFields(s: Sema; n: AstNode) =
-  let sym = s.prog.syms[n.symId]
-  let t = sym.typ
-  if t.opaque:
-    return
-  if n.typeFields.len == 0:
-    fail("E-TYPE", s.curMod.file, n.line, n.col,
+proc resolveFieldsInto(s: Sema; t: Type; fieldNodes: seq[AstNode];
+                       where: AstNode) =
+  if fieldNodes.len == 0:
+    fail("E-TYPE", s.curMod.file, where.line, where.col,
          "пустой object запрещён",
          "объект без полей не имеет C-представления; добавьте поле")
   var seen = initTable[string, bool]()
-  for fn in n.typeFields:
+  for fn in fieldNodes:
     let key = cSanitize(fn.declFieldName)
     if seen.hasKey(key):
       fail("E-DUP-FIELD", s.curMod.file, fn.line, fn.col,
@@ -194,11 +301,38 @@ proc resolveTypeFields(s: Sema; n: AstNode) =
     t.fields.add Field(name: fn.declFieldName, typ: ft,
                        exported: fn.declFieldExported)
 
+proc resolveTypeFields(s: Sema; n: AstNode) =
+  let sym = s.prog.syms[n.symId]
+  let t = sym.typ
+  if t.opaque or t.isGeneric:
+    return
+  s.resolveFieldsInto(t, n.typeFields, n)
+
 proc declareProc(s: Sema; n: AstNode) =
   if s.curMod.scope.hasOwn(n.procName):
     fail("E-DUP-SYMBOL", s.curMod.file, n.line, n.col,
          "повторное объявление: " & n.procName)
   s.validatePragmas(n.procPragmas, @["importc", "cdecl", "header"], "процедуры")
+  if n.genericParams.len > 0:
+    if pragmaVal(n.procPragmas, "importc").len > 0:
+      fail("E-UNSUPPORTED", s.curMod.file, n.line, n.col,
+           "generic-процедура не может быть importc")
+    if n.body == nil:
+      fail("E-UNSUPPORTED", s.curMod.file, n.line, n.col,
+           "generic-процедура должна иметь тело")
+    let ptype = newType(tyProc)
+    let sym = Symbol(kind: skProc, name: n.procName, typ: ptype, node: n,
+                     exported: n.exportedProc, modulePath: s.curMod.path,
+                     isGeneric: true, genericParams: n.genericParams)
+    for p in n.params:
+      sym.paramNames.add p.paramName
+      sym.paramVars.add p.paramVar
+    discard s.addSym(sym)
+    n.symId = sym.id
+    s.curMod.scope.define(sym)
+    if n.exportedProc:
+      s.curMod.addExport(sym)
+    return
   var params: seq[Type]
   var pnames: seq[string]
   var pvars: seq[bool]
@@ -233,6 +367,7 @@ proc declareProc(s: Sema; n: AstNode) =
                            else: procCName(s.curMod, n.procName)))
   sym.paramNames = pnames
   sym.paramVars = pvars
+  sym.typeEnv = initTable[string, Type]()
   discard s.addSym(sym)
   n.symId = sym.id
   s.curMod.scope.define(sym)
@@ -253,6 +388,58 @@ proc declareProc(s: Sema; n: AstNode) =
     discard s.addSym(psym)
     p.symId = psym.id
     sym.paramSyms.add psym
+
+proc instantiateProc(s: Sema; tmpl: Symbol; args: seq[Type];
+                     bindings: Table[string, Type];
+                     callNode: AstNode): Symbol =
+  if not tmpl.isGeneric:
+    fail("E-GENERIC-NOT-GENERIC", s.curMod.file, callNode.line,
+         callNode.col, "'" & tmpl.name & "' не является generic-процедурой")
+  if args.len != tmpl.genericParams.len:
+    fail("E-GENERIC-ARG-COUNT", s.curMod.file, callNode.line,
+         callNode.col, "generic-процедура '" & tmpl.name & "' ожидает " &
+         $tmpl.genericParams.len & " аргумент(ов) типа")
+  if s.monoDepth + 1 > 64:
+    fail("E-MONO-DEPTH", s.curMod.file, callNode.line, callNode.col,
+         "превышена глубина мономорфизации (64) для '" & tmpl.name & "'")
+  let key = $tmpl.id & "|" & typeArgsKey(args)
+  if s.procCache.hasKey(key):
+    return s.procCache[key]
+  let owner = s.findModule(tmpl.modulePath)
+  if owner == nil:
+    fail("E-INTERNAL", s.curMod.file, callNode.line, callNode.col,
+         "модуль шаблона не найден: " & tmpl.modulePath)
+  let clone = cloneAst(tmpl.node)
+  let oldMod = s.curMod
+  let oldEnv = s.typeEnv
+  s.curMod = owner
+  s.typeEnv = bindings
+  let ptype = newType(tyProc)
+  for p in clone.params:
+    ptype.params.add s.typeFromNode(p.paramTypeNode)
+  ptype.ret = s.typeFromNode(clone.retTypeNode)
+  let inst = Symbol(kind: skProc, name: tmpl.name,
+                    cname: procCName(owner, tmpl.name) & "_g_" &
+                           cSanitize(typeArgsKey(args)),
+                    typ: ptype, node: clone, exported: false,
+                    modulePath: tmpl.modulePath,
+                    paramNames: tmpl.paramNames, paramVars: tmpl.paramVars,
+                    templateId: tmpl.id, typeArgs: args,
+                    monoDepth: s.monoDepth + 1, typeEnv: bindings)
+  discard s.addSym(inst)
+  for i, p in clone.params:
+    let psym = Symbol(kind: skParam, name: p.paramName,
+                      typ: ptype.params[i], node: p,
+                      byRef: p.paramVar)
+    discard s.addSym(psym)
+    p.symId = psym.id
+    inst.paramSyms.add psym
+  s.curMod = oldMod
+  s.typeEnv = oldEnv
+  s.procCache[key] = inst
+  s.prog.procs.add inst
+  s.pending.add inst
+  inst
 
 proc setupModule(s: Sema; m: ModuleInfo) =
   s.curMod = m
@@ -344,6 +531,132 @@ proc sameOrCoerce(a, b: Type): bool =
 
 proc analExpr(s: Sema; n: AstNode): Type
 
+proc astHasParam(n: AstNode; params: seq[string]): bool =
+  if n.isNil:
+    return false
+  case n.kind
+  of nkTypeName:
+    n.typeName in params
+  of nkTypeApply:
+    if n.appliedName in params:
+      true
+    else:
+      for a in n.appliedArgs:
+        if astHasParam(a, params):
+          return true
+      false
+  of nkPtrType, nkResultType:
+    astHasParam(n.elemType, params)
+  else:
+    false
+
+proc matchTypeNode(s: Sema; ast: AstNode; arg: Type; params: seq[string];
+                   bindings: var Table[string, Type]): bool =
+  if ast.isNil or arg.isNil:
+    return false
+  case ast.kind
+  of nkTypeName:
+    if ast.typeName in params:
+      if bindings.hasKey(ast.typeName):
+        return sameType(bindings[ast.typeName], arg)
+      bindings[ast.typeName] = arg
+      true
+    else:
+      sameType(s.typeFromNode(ast), arg)
+  of nkPtrType:
+    arg.kind == tyPtr and
+      s.matchTypeNode(ast.elemType, arg.elem, params, bindings)
+  of nkResultType:
+    arg.kind == tyResult and
+      s.matchTypeNode(ast.elemType, arg.elem, params, bindings)
+  of nkTypeApply:
+    if astHasParam(ast, params):
+      let sym = s.curMod.scope.lookup(ast.appliedName)
+      if sym == nil or sym.kind != skType or not sym.typ.isGeneric:
+        return false
+      if arg.kind != tyObject or arg.templateId != sym.id or
+         arg.typeArgs.len != ast.appliedArgs.len:
+        return false
+      for i in 0 ..< ast.appliedArgs.len:
+        if not s.matchTypeNode(ast.appliedArgs[i], arg.typeArgs[i],
+                               params, bindings):
+          return false
+      true
+    else:
+      sameType(s.typeFromNode(ast), arg)
+  else:
+    false
+
+proc inferBindings(s: Sema; tmpl: Symbol; args: seq[AstNode];
+                   explicit: seq[AstNode];
+                   callNode: AstNode): Table[string, Type] =
+  result = initTable[string, Type]()
+  if explicit.len > 0:
+    if explicit.len != tmpl.genericParams.len:
+      fail("E-GENERIC-ARG-COUNT", s.curMod.file, callNode.line,
+           callNode.col, "generic-процедура '" & tmpl.name & "' ожидает " &
+           $tmpl.genericParams.len & " аргумент(ов) типа, получено " &
+           $explicit.len)
+    for i, p in tmpl.genericParams:
+      result[p] = s.typeFromNode(explicit[i])
+    return
+  if args.len != tmpl.node.params.len:
+    fail("E-ARG-COUNT", s.curMod.file, callNode.line, callNode.col,
+         "процедура '" & tmpl.name & "' ожидает " &
+         $tmpl.node.params.len & " аргументов, а получила " & $args.len)
+  for i, a in args:
+    let at = s.analExpr(a)
+    if not s.matchTypeNode(tmpl.node.params[i].paramTypeNode, at,
+                           tmpl.genericParams, result):
+      fail("E-TYPE", s.curMod.file, a.line, a.col,
+           "аргумент " & $(i + 1) & " для '" & tmpl.name &
+           "': не удалось сопоставить " & typeName(at) & " с параметром")
+  var missing: seq[string]
+  for p in tmpl.genericParams:
+    if not result.hasKey(p):
+      missing.add p
+  if missing.len > 0:
+    fail("E-GENERIC-CANNOT-INFER", s.curMod.file, callNode.line,
+         callNode.col, "не удалось вывести параметры типа: " &
+         missing.join(", "),
+         "укажите их явно: " & tmpl.name & "[" & missing.join(", ") & "]")
+
+proc inferCtorBindings(s: Sema; tmpl: Symbol; args: seq[AstNode];
+                       callNode: AstNode): Table[string, Type] =
+  result = initTable[string, Type]()
+  var seen = initTable[string, bool]()
+  for a in args:
+    if a.kind != nkNamedField:
+      fail("E-UNSUPPORTED", s.curMod.file, a.line, a.col,
+           "generic-конструктор принимает только поля 'field: value'")
+    if seen.hasKey(a.namedName):
+      fail("E-DUP-FIELD", s.curMod.file, a.line, a.col,
+           "поле " & a.namedName & " задано дважды")
+    seen[a.namedName] = true
+    var fieldNode: AstNode = nil
+    for fn in tmpl.node.typeFields:
+      if fn.declFieldName == a.namedName:
+        fieldNode = fn
+        break
+    if fieldNode == nil:
+      fail("E-FIELD", s.curMod.file, a.line, a.col,
+           "у типа " & tmpl.name & " нет поля " & a.namedName)
+    let vt = s.analExpr(a.namedValue)
+    if not s.matchTypeNode(fieldNode.declFieldType, vt, tmpl.genericParams,
+                           result):
+      fail("E-TYPE", s.curMod.file, a.namedValue.line,
+           a.namedValue.col, "поле " & a.namedName &
+           ": не удалось сопоставить " & typeName(vt) & " с параметром")
+  var missing: seq[string]
+  for p in tmpl.genericParams:
+    if not result.hasKey(p):
+      missing.add p
+  if missing.len > 0:
+    fail("E-GENERIC-CANNOT-INFER", s.curMod.file, callNode.line,
+         callNode.col, "не удалось вывести параметры типа: " &
+         missing.join(", "),
+         "укажите их явно: " & tmpl.name & "[...]")
+
 proc checkCall(s: Sema; sym: Symbol; args: seq[AstNode]; n: AstNode) =
   let ptype = sym.typ
   if args.len != ptype.params.len:
@@ -377,7 +690,7 @@ proc analCall(s: Sema; n: AstNode): Type =
         if n.args.len notin {1, 2}:
           fail("E-ARG-COUNT", s.curMod.file, n.line, n.col,
                "create ожидает 'create(T)' или 'create(T, value)'")
-        if n.args[0].kind != nkIdent:
+        if n.args[0].kind notin {nkIdent, nkTypeApply}:
           fail("E-TYPE", s.curMod.file, n.args[0].line, n.args[0].col,
                "create: первым аргументом должно быть имя типа")
         let t = s.typeFromName(n.args[0], "create")
@@ -437,9 +750,19 @@ proc analCall(s: Sema; n: AstNode): Type =
     for a in n.args:
       args.add a
     n.args = args
-    n.symId = sym.id
-    s.checkCall(sym, n.args, n)
-    n.typ = sym.typ.ret
+    var target = sym
+    if sym.isGeneric:
+      let bindings = s.inferBindings(sym, args, n.genericArgs, n)
+      var targs: seq[Type]
+      for p in sym.genericParams:
+        targs.add bindings[p]
+      target = s.instantiateProc(sym, targs, bindings, n)
+    elif n.genericArgs.len > 0:
+      fail("E-GENERIC-NOT-GENERIC", s.curMod.file, n.line, n.col,
+           "'" & sym.name & "' не является generic-процедурой")
+    n.symId = target.id
+    s.checkCall(target, args, n)
+    n.typ = target.typ.ret
     return n.typ
   elif n.callee.kind == nkIdent:
     let cname = n.callee.name
@@ -465,7 +788,25 @@ proc analCall(s: Sema; n: AstNode): Type =
       return n.typ
     let ctorSym = s.lookup(cname)
     if ctorSym != nil and ctorSym.kind == skType:
-      let t = ctorSym.typ
+      var t = ctorSym.typ
+      if t.isGeneric:
+        var targs: seq[Type]
+        if n.genericArgs.len > 0:
+          if n.genericArgs.len != t.genericParams.len:
+            fail("E-GENERIC-ARG-COUNT", s.curMod.file, n.line, n.col,
+                 "тип '" & t.name & "' ожидает " &
+                 $t.genericParams.len & " аргумент(ов) типа, получено " &
+                 $n.genericArgs.len)
+          for a in n.genericArgs:
+            targs.add s.typeFromNode(a)
+        else:
+          let bindings = s.inferCtorBindings(ctorSym, n.args, n)
+          for p in t.genericParams:
+            targs.add bindings[p]
+        t = s.instantiateType(ctorSym, targs, n)
+      elif n.genericArgs.len > 0:
+        fail("E-GENERIC-NOT-GENERIC", s.curMod.file, n.line, n.col,
+             "'" & t.name & "' не является generic-типом")
       if t.opaque:
         fail("E-UNSUPPORTED", s.curMod.file, n.line, n.col,
              "непрозрачный {.importc.}-тип нельзя конструировать",
@@ -547,9 +888,19 @@ proc analCall(s: Sema; n: AstNode): Type =
     if sym.kind != skProc:
       fail("E-TYPE", s.curMod.file, n.callee.line, n.callee.col,
            "'" & n.callee.name & "' не является процедурой")
-    n.symId = sym.id
-    s.checkCall(sym, n.args, n)
-    n.typ = sym.typ.ret
+    var target = sym
+    if sym.isGeneric:
+      let bindings = s.inferBindings(sym, n.args, n.genericArgs, n)
+      var targs: seq[Type]
+      for p in sym.genericParams:
+        targs.add bindings[p]
+      target = s.instantiateProc(sym, targs, bindings, n)
+    elif n.genericArgs.len > 0:
+      fail("E-GENERIC-NOT-GENERIC", s.curMod.file, n.line, n.col,
+           "'" & sym.name & "' не является generic-процедурой")
+    n.symId = target.id
+    s.checkCall(target, n.args, n)
+    n.typ = target.typ.ret
     return n.typ
   else:
     fail("E-UNSUPPORTED", s.curMod.file, n.line, n.col,
@@ -567,14 +918,24 @@ proc analExpr(s: Sema; n: AstNode): Type =
     let sym = s.lookup(n.name)
     if sym == nil:
       fail("E-UNDEF", s.curMod.file, n.line, n.col, "неизвестное имя: " & n.name)
+    if sym.kind == skProc and sym.isGeneric:
+      fail("E-GENERIC-VALUE", s.curMod.file, n.line, n.col,
+           "generic-процедура '" & n.name & "' не существует без конкретизации",
+           "вызовите её с аргументами или укажите [T]")
     if sym.kind in {skProc, skBuiltin}:
       fail("E-UNSUPPORTED", s.curMod.file, n.line, n.col,
            "процедура как значение не поддерживается в v0.1 (v0.3)")
     if sym.kind == skType:
+      if sym.typ.isGeneric:
+        fail("E-GENERIC-NEEDS-ARGS", s.curMod.file, n.line, n.col,
+             "generic-типу '" & n.name & "' нужны аргументы типа")
       fail("E-TYPE", s.curMod.file, n.line, n.col,
            "тип '" & n.name & "' использован как значение")
     n.symId = sym.id
     n.typ = sym.typ
+  of nkTypeApply:
+    fail("E-GENERIC-VALUE", s.curMod.file, n.line, n.col,
+         "generic-тип '" & n.appliedName & "' использован как значение")
   of nkUnary:
     let t = s.analExpr(n.a)
     case n.op
@@ -764,21 +1125,35 @@ proc analStmt(s: Sema; n: AstNode) =
       fail("E-DISCARD-REQUIRED", s.curMod.file, n.line, n.col,
            "значение типа " & typeName(t) & " не использовано; нужен discard")
 
+proc analyzeProcBody(s: Sema; sym: Symbol) =
+  let m = s.findModule(sym.modulePath)
+  if m == nil:
+    fail("E-INTERNAL", s.prog.entry.file, sym.node.line, sym.node.col,
+         "модуль процедуры не найден: " & sym.modulePath)
+  s.curMod = m
+  s.procSym = sym
+  s.typeEnv = sym.typeEnv
+  s.scopes = @[newScope(m.scope)]
+  for i, p in sym.node.params:
+    let ps = sym.paramSyms[i]
+    if s.scopes[^1].hasOwn(ps.name):
+      fail("E-DUP-SYMBOL", m.file, p.line, p.col,
+           "повторяющийся параметр: " & ps.name)
+    s.scopes[^1].define(ps)
+  s.inDefer = 0
+  let oldDepth = s.monoDepth
+  s.monoDepth = sym.monoDepth
+  s.analStmt(sym.node.body)
+  s.monoDepth = oldDepth
+
 proc analyzeModuleBodies(s: Sema; m: ModuleInfo) =
   s.curMod = m
   for stmt in m.ast.stmts:
     if stmt.kind == nkProcDecl and stmt.body != nil:
       let sym = s.prog.syms[stmt.symId]
-      s.procSym = sym
-      s.scopes = @[newScope(m.scope)]
-      for i, p in stmt.params:
-        let ps = sym.paramSyms[i]
-        if s.scopes[^1].hasOwn(ps.name):
-          fail("E-DUP-SYMBOL", m.file, p.line, p.col,
-               "повторяющийся параметр: " & ps.name)
-        s.scopes[^1].define(ps)
-      s.inDefer = 0
-      s.analStmt(stmt.body)
+      if sym.isGeneric:
+        continue
+      s.analyzeProcBody(sym)
 
 proc findMain(s: Sema) =
   let m = s.prog.entry
@@ -799,44 +1174,41 @@ proc findMain(s: Sema) =
 
 proc computeTypeOrder(s: Sema) =
   var state = initTable[string, int]()
-  var nodes = initTable[string, AstNode]()
-  var files = initTable[string, string]()
-  for m in s.prog.modules:
-    for stmt in m.ast.stmts:
-      if stmt.kind == nkTypeDecl:
-        let t = s.prog.syms[stmt.symId].typ
-        nodes[t.cname] = stmt
-        files[t.cname] = m.file
+  var order: seq[Type]
+  let all = s.prog.objectTypes
 
-  proc visit(t: Type; where: AstNode) =
-    if t.opaque:
+  proc visit(t: Type) =
+    if t.opaque or t.isGeneric:
       return
     let key = t.cname
     let st = state.getOrDefault(key, 0)
     if st == 1:
-      let f = files.getOrDefault(key, s.prog.entry.file)
-      fail("E-TYPE", f, where.line, where.col,
+      fail("E-TYPE", t.declFile, t.declLine, t.declCol,
            "циклическая вложенность объектов по значению: " & t.name,
            "разорвите цикл полем ptr " & t.name)
     if st == 2:
       return
     state[key] = 1
     for fld in t.fields:
-      if fld.typ.kind == tyObject and not fld.typ.opaque:
-        visit(fld.typ, where)
+      if fld.typ.kind == tyObject and not fld.typ.opaque and
+         not fld.typ.isGeneric:
+        visit(fld.typ)
     state[key] = 2
-    s.prog.objectTypes.add t
+    order.add t
 
-  for m in s.prog.modules:
-    for stmt in m.ast.stmts:
-      if stmt.kind == nkTypeDecl:
-        visit(s.prog.syms[stmt.symId].typ, stmt)
+  for t in all:
+    visit(t)
+  s.prog.objectTypes = order
 
 proc analyze*(modules: seq[ModuleInfo]; opts: BuildOptions): Program =
   let prog = Program(modules: modules, opts: opts, syms: @[], procs: @[],
                      objectTypes: @[], strings: @[])
   var s = Sema(prog: prog, builtins: makeBuiltins(),
-               builtinSizes: initTable[string, Symbol]())
+               builtinSizes: initTable[string, Symbol](),
+               typeCache: initTable[string, Type](),
+               procCache: initTable[string, Symbol](),
+               pending: @[],
+               typeEnv: initTable[string, Type](), monoDepth: 0)
   let deinitType = newType(tyProc)
   deinitType.params = @[s.builtins["string"]]
   deinitType.ret = s.builtins["void"]
@@ -876,8 +1248,13 @@ proc analyze*(modules: seq[ModuleInfo]; opts: BuildOptions): Program =
     if m.isEntry:
       prog.entry = m
     s.setupModule(m)
-  s.computeTypeOrder()
   for m in modules:
     s.analyzeModuleBodies(m)
+  var pi = 0
+  while pi < s.pending.len:
+    let sym = s.pending[pi]
+    inc pi
+    s.analyzeProcBody(sym)
+  s.computeTypeOrder()
   s.findMain()
   prog

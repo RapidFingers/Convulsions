@@ -158,6 +158,51 @@ block:
   check m.stmts.len == 3, "parser: pragma + import + proc"
 
 block:
+  let src = "type Box[T] = object\n  value: T\n\n" &
+            "proc id[T](x: T): T =\n  return x\n\n" &
+            "proc main(): !void =\n" &
+            "  let b: Box[int] = Box[int](value: 1)\n" &
+            "  discard id[int](1)\n"
+  let m = parseModule(lex(src, "t.conv"), "t.conv")
+  var genericTypes = 0
+  var genericProcs = 0
+  var mainNode: AstNode = nil
+  for s in m.stmts:
+    if s.kind == nkTypeDecl and s.genericParams == @["T"]:
+      inc genericTypes
+    if s.kind == nkProcDecl:
+      if s.genericParams.len > 0:
+        inc genericProcs
+      elif s.procName == "main":
+        mainNode = s
+  checkEq genericTypes, 1, "parser: generic-тип"
+  checkEq genericProcs, 1, "parser: generic-процедура"
+  var hasTypeApply = false
+  for st in mainNode.body.stmts:
+    if st.kind == nkLet and st.varTypeNode != nil and
+       st.varTypeNode.kind == nkTypeApply:
+      hasTypeApply = true
+  check hasTypeApply, "parser: Box[int] в позиции типа"
+
+block:
+  let entry = fixtures / "generics_basic.conv"
+  let opts = BuildOptions(entry: entry, profile: "kernel",
+                          searchPaths: @[fixtures, stdlib],
+                          runtimePath: runtime)
+  let prog = analyze(loadProgram(entry, opts), opts)
+  var hasBox = false
+  var hasPair = false
+  for t in prog.objectTypes:
+    if t.name == "Box[int]": hasBox = true
+    if t.name == "Pair[int]": hasPair = true
+  check hasBox, "sema: инстанцирован Box[int]"
+  check hasPair, "sema: инстанцирован Pair[int]"
+  var mono = 0
+  for p in prog.procs:
+    if "_g_" in p.cname: inc mono
+  check mono >= 2, "sema: generic-процедуры мономорфизированы"
+
+block:
   expectCvnError("E-NO-RETTYPE", proc () =
     discard parseModule(lex("proc f()\n  discard 1\n", "t.conv"), "t.conv"))
 
@@ -276,6 +321,19 @@ let negatives = [
   ("import_all_private.conv", "E-UNDEF"),
   ("import_conflict.conv", "E-DUP-SYMBOL"),
   ("import_local_conflict.conv", "E-DUP-SYMBOL"),
+  ("gen_bare_type.conv", "E-GENERIC-NEEDS-ARGS"),
+  ("gen_arg_count.conv", "E-GENERIC-ARG-COUNT"),
+  ("gen_partial.conv", "E-GENERIC-ARG-COUNT"),
+  ("gen_cannot_infer.conv", "E-GENERIC-CANNOT-INFER"),
+  ("gen_value.conv", "E-GENERIC-VALUE"),
+  ("gen_type_value.conv", "E-GENERIC-VALUE"),
+  ("gen_not_generic.conv", "E-GENERIC-NOT-GENERIC"),
+  ("gen_constraint.conv", "E-UNSUPPORTED"),
+  ("gen_static.conv", "E-UNSUPPORTED"),
+  ("gen_value_cycle.conv", "E-TYPE"),
+  ("gen_private_field.conv", "E-PRIVATE"),
+  ("gen_index.conv", "E-UNSUPPORTED"),
+  ("gen_depth.conv", "E-MONO-DEPTH"),
 ]
 
 for item in negatives:
@@ -526,11 +584,61 @@ block:
     checkEq r.code, 0, "import-all: exit code"
     checkEq r.output, "import-all-ok\n", "import-all: stdout"
 
+# ---------------------------------------------------------------- e2e: generics
+block:
+  let exe = tmp / "generics"
+  let b = run(cvn, @["build", root / "examples" / "generics.conv",
+                     "-o", exe,
+                     "--path=" & stdlib, "--runtime-path=" & runtime])
+  checkEq b.code, 0, "generics: пример собирается (" & b.output & ")"
+  if b.code == 0:
+    var e = exe
+    if not fileExists(e) and fileExists(exe & ExeSuffix):
+      e = exe & ExeSuffix
+    let r = run(e, @[])
+    checkEq r.code, 0, "generics: exit code"
+    checkEq r.output, "generics ok\n", "generics: stdout"
+
+let genericPositives = [
+  ("generics_basic.conv", "gen_basic", "gen-basic-ok\n"),
+  ("generics_nested.conv", "gen_nested", "gen-nested-ok\n"),
+  ("generics_return.conv", "gen_return", "gen-return-ok\n"),
+  ("generics_varparam.conv", "gen_varparam", "gen-varparam-ok\n"),
+  ("generics_ufcs.conv", "gen_ufcs", "gen-ufcs-ok\n"),
+  ("generics_string.conv", "gen_string", "gen-string-ok\n"),
+  ("generics_field.conv", "gen_field", "gen-field-ok\n"),
+  ("generics_module.conv", "gen_module", "gen-module-ok\n"),
+  ("generics_recursive.conv", "gen_recursive", "gen-recursive-ok\n"),
+]
+
+for item in genericPositives:
+  let b = buildFixture(item[0], item[1])
+  checkEq b.code, 0, item[0] & ": собирается (" & b.output & ")"
+  if b.code == 0:
+    let r = run(b.exe, @[])
+    checkEq r.code, 0, item[0] & ": exit code"
+    checkEq r.output, item[2], item[0] & ": stdout"
+
+block:
+  let c1 = tmp / "genc1"
+  let c2 = tmp / "genc2"
+  let r1 = run(cvn, @["build", root / "examples" / "generics.conv",
+                      "-o", tmp / "g1", "--emit-c=" & c1,
+                      "--path=" & stdlib, "--runtime-path=" & runtime])
+  let r2 = run(cvn, @["build", root / "examples" / "generics.conv",
+                      "-o", tmp / "g2", "--emit-c=" & c2,
+                      "--path=" & stdlib, "--runtime-path=" & runtime])
+  checkEq r1.code, 0, "generics emit-c: первая сборка"
+  checkEq r2.code, 0, "generics emit-c: вторая сборка"
+  if fileExists(c1 / "main.c") and fileExists(c2 / "main.c"):
+    checkEq readFile(c1 / "main.c"), readFile(c2 / "main.c"),
+            "generics emit-c: детерминизм"
+
 # ---------------------------------------------------------------- e2e: version
 block:
   let r = run(cvn, @["version"])
   checkEq r.code, 0, "version: exit code"
-  check "0.7.0" in r.output, "version: номер версии"
+  check "0.8.0" in r.output, "version: номер версии"
 
 if failures > 0:
   echo "\n", failures, " проверок провалено"

@@ -1,0 +1,9 @@
+{.profile: kernel.}
+
+type
+  Box*[T] = object
+    value*: T
+
+proc main(): !void =
+  let b = Box[int]
+  discard b

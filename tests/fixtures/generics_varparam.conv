@@ -1,0 +1,11 @@
+{.profile: kernel.}
+import core/io
+
+proc setTo[T](x: var T, v: T): void =
+  x = v
+
+proc main(): !void =
+  var n = 1
+  setTo(n, 5)
+  assert(n == 5)
+  try println("gen-varparam-ok")

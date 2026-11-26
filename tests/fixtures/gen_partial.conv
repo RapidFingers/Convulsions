@@ -1,0 +1,10 @@
+{.profile: kernel.}
+
+type
+  Pair*[K, V] = object
+    first*: K
+    second*: V
+
+proc main(): !void =
+  let p = Pair[int](first: 1, second: 2)
+  discard p.first

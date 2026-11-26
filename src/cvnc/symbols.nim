@@ -22,6 +22,12 @@ type
     paramVars*: seq[bool]
     paramSyms*: seq[Symbol]
     builtin*: string
+    isGeneric*: bool
+    genericParams*: seq[string]
+    typeArgs*: seq[Type]
+    templateId*: int
+    monoDepth*: int
+    typeEnv*: Table[string, Type]
 
   Scope* = ref object
     parent*: Scope

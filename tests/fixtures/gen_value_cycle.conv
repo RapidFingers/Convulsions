@@ -1,0 +1,9 @@
+{.profile: kernel.}
+
+type
+  R*[T] = object
+    next*: R[T]
+
+proc main(): !void =
+  let r = R[int]()
+  discard r.next

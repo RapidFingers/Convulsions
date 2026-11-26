@@ -1,0 +1,8 @@
+{.profile: kernel.}
+
+proc identity[T](x: T): T =
+  return x
+
+proc main(): !void =
+  let f = identity
+  discard f

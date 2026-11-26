@@ -1,0 +1,29 @@
+{.profile: kernel.}
+import core/io
+
+type
+  Box*[T] = object
+    value*: T
+  Pair*[T] = object
+    first*: T
+    second*: T
+
+proc identity[T](x: T): T =
+  return x
+
+proc swap[T](p: Pair[T]): Pair[T] =
+  return Pair[T](first: p.second, second: p.first)
+
+proc main(): !void =
+  assert(identity(5) == 5)
+  assert(identity[int](5) == 5)
+  let p = Pair(first: 1, second: 2)
+  let q = swap(p)
+  assert(q.first == 2)
+  let b = Box[int](value: 7)
+  let z = Box[int]()
+  let typed: Box[int] = Box[int](value: 3)
+  assert(typed.value == 3)
+  assert(z.value == 0)
+  assert(b.value == 7)
+  try println("gen-basic-ok")

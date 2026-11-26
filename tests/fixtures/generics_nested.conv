@@ -1,0 +1,30 @@
+{.profile: kernel.}
+import core/mem
+import core/io
+
+type
+  Box*[T] = object
+    value*: T
+  Pair*[T] = object
+    first*: T
+    second*: T
+  Node*[T] = object
+    value*: T
+    next*: ptr Node[T]
+
+proc main(): !void =
+  let p = Pair(first: 1, second: 2)
+  let b = Box[Pair[int]](value: p)
+  assert(b.value.first == 1)
+  let bi = Box(value: p)
+  assert(bi.value.second == 2)
+  assert(sizeof(Box[Pair[int]]) == sizeof(Pair[int]))
+  assert(sizeof(Pair[int]) == 16)
+
+  let a = pageAllocator()
+  let n = try a.create(Node[int])
+  n.value = 5
+  assert(n.value == 5)
+  a.destroy(n)
+
+  try println("gen-nested-ok")

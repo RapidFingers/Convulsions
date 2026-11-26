@@ -70,7 +70,7 @@ proc lowerPath(l: Lower; n: AstNode): tuple[slot: int, rootPtr: bool,
       r
   else:
     fail("E-INTERNAL", l.prog.entry.file, n.line, n.col,
-         "выражение не является lvalue")
+         "выражение не является lvalue: " & $n.kind)
 
 proc lowerExpr(l: Lower; n: AstNode): int =
   case n.kind
@@ -414,3 +414,5 @@ proc lowerProgram*(prog: Program): seq[HirProc] =
     if sym.external:
       continue
     result.add l.lowerProc(sym)
+
+

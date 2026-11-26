@@ -1,0 +1,11 @@
+{.profile: kernel.}
+
+type
+  Box*[T] = object
+    value*: T
+
+proc f[T](x: T): T =
+  return f[Box[T]](Box[T](value: x)).value
+
+proc main(): !void =
+  discard f(1)

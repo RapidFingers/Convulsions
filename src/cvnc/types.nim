@@ -1,5 +1,7 @@
 ## Представление типов Convulsions (MVP).
 
+import std/strutils
+
 type
   TypeKind* = enum
     tyVoid, tyInt, tyBool, tyChar, tyString, tyRune, tyPointer, tyPtr,
@@ -20,6 +22,13 @@ type
     opaque*: bool
     ownerModule*: string
     fields*: seq[Field]
+    isGeneric*: bool
+    genericParams*: seq[string]
+    templateId*: int
+    typeArgs*: seq[Type]
+    declLine*: int
+    declCol*: int
+    declFile*: string
 
 proc newType*(kind: TypeKind; name = ""): Type =
   Type(kind: kind, name: name)
@@ -34,6 +43,36 @@ proc cSanitize*(s: string): string =
 proc ptrTo*(elem: Type): Type =
   result = newType(tyPtr)
   result.elem = elem
+
+proc typeKey*(t: Type): string =
+  if t == nil:
+    return "nil"
+  case t.kind
+  of tyVoid: "void"
+  of tyInt: "int"
+  of tyBool: "bool"
+  of tyChar: "char"
+  of tyString: "string"
+  of tyRune: "rune"
+  of tyPointer: "pointer"
+  of tyPtr: "ptr_" & typeKey(t.elem)
+  of tyResult: "res_" & typeKey(t.elem)
+  of tyObject: t.cname
+  of tyProc:
+    var parts: seq[string]
+    for p in t.params:
+      parts.add typeKey(p)
+    parts.add typeKey(t.ret)
+    "proc_" & parts.join("_")
+  of tyError: "error"
+  of tyErrorCode: "errcode"
+  of tyUnknown: "unknown"
+
+proc typeArgsKey*(args: seq[Type]): string =
+  var parts: seq[string]
+  for a in args:
+    parts.add typeKey(a)
+  parts.join("_")
 
 proc isResult*(t: Type): bool =
   t != nil and t.kind == tyResult

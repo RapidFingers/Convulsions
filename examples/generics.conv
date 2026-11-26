@@ -1,0 +1,49 @@
+{.profile: kernel.}
+import core/mem
+import core/io
+
+type
+  Box*[T] = object
+    value*: T
+  Pair*[T] = object
+    first*: T
+    second*: T
+  Node*[T] = object
+    value*: T
+    next*: ptr Node[T]
+
+proc identity[T](x: T): T =
+  return x
+
+proc swap[T](p: Pair[T]): Pair[T] =
+  return Pair[T](first: p.second, second: p.first)
+
+proc make[T](v: T): !Box[T] =
+  return Box[T](value: v)
+
+proc main(): !void =
+  assert(identity(5) == 5)
+  assert(identity[int](5) == 5)
+
+  let p = Pair(first: 1, second: 2)
+  let q = swap(p)
+  assert(q.first == 2)
+
+  let b = Box[int](value: 7)
+  let z = Box[int]()
+  assert(b.value == 7)
+  assert(z.value == 0)
+
+  let nested = Box[Pair[int]](value: p)
+  assert(nested.value.first == 1)
+
+  let nb = try make(9)
+  assert(nb.value == 9)
+
+  let a = pageAllocator()
+  let n = try a.create(Node[int])
+  n.value = 4
+  assert(n.value == 4)
+  a.destroy(n)
+
+  try println("generics ok")

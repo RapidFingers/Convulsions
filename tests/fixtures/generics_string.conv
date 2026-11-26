@@ -1,0 +1,12 @@
+{.profile: kernel.}
+import core/io
+
+type
+  Box*[T] = object
+    value*: T
+
+proc main(): !void =
+  let b = Box[string](value: "hi")
+  defer: b.value.deinit()
+  assert(b.value.len == 2)
+  try println("gen-string-ok")

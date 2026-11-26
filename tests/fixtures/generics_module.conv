@@ -1,0 +1,13 @@
+{.profile: kernel.}
+import gmod/lib
+import core/io
+
+proc main(): !void =
+  let b = Box[int](value: 3)
+  assert(b.value == 3)
+  let c = Box(value: 4)
+  assert(c.value == 4)
+  assert(identity(5) == 5)
+  let s = Box(value: "abc")
+  assert(s.value.len == 3)
+  try println("gen-module-ok")

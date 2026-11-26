@@ -9,7 +9,7 @@ type
     nkBlock, nkLet, nkVar, nkDefer, nkReturn, nkDiscard, nkCall, nkField,
     nkIdent, nkIntLit, nkStrLit, nkCharLit, nkUnary, nkBinary, nkTry,
     nkTypeName, nkPtrType, nkResultType, nkFieldDecl, nkNamedField, nkAssign,
-    nkDeref
+    nkDeref, nkTypeApply
 
   AstNode* = ref object
     line*: int
@@ -18,11 +18,15 @@ type
     symId*: int
     convTo*: Type
     typeRef*: Type
+    genericParams*: seq[string]
     case kind*: NodeKind
     of nkIdent:
       name*: string
     of nkTypeName:
       typeName*: string
+    of nkTypeApply:
+      appliedName*: string
+      appliedArgs*: seq[AstNode]
     of nkIntLit:
       intVal*: int64
     of nkCharLit:
@@ -41,6 +45,7 @@ type
     of nkCall:
       callee*: AstNode
       args*: seq[AstNode]
+      genericArgs*: seq[AstNode]
     of nkPragma:
       pragmaName*: string
       pragmaValue*: string
@@ -105,6 +110,7 @@ proc dumpAst*(n: AstNode; indent = 0): string =
   case n.kind
   of nkIdent: result.add " " & n.name
   of nkTypeName: result.add " " & n.typeName
+  of nkTypeApply: result.add " " & n.appliedName & "[" & $n.appliedArgs.len & "]"
   of nkIntLit: result.add " " & $n.intVal
   of nkCharLit: result.add " '" & $n.charVal & "'"
   of nkStrLit: result.add " " & repr(n.strVal)
@@ -163,4 +169,95 @@ proc dumpAst*(n: AstNode; indent = 0): string =
     result.add dumpAst(n.rhs, indent + 1)
   of nkDeref:
     result.add dumpAst(n.derefObj, indent + 1)
+  of nkTypeApply:
+    for a in n.appliedArgs:
+      result.add dumpAst(a, indent + 1)
   else: discard
+
+proc cloneAst*(n: AstNode): AstNode =
+  if n.isNil:
+    return nil
+  result = newNode(n.kind, n.line, n.col)
+  result.symId = -1
+  result.genericParams = n.genericParams
+  case n.kind
+  of nkIdent: result.name = n.name
+  of nkTypeName: result.typeName = n.typeName
+  of nkTypeApply:
+    result.appliedName = n.appliedName
+    for a in n.appliedArgs:
+      result.appliedArgs.add cloneAst(a)
+  of nkIntLit: result.intVal = n.intVal
+  of nkCharLit: result.charVal = n.charVal
+  of nkStrLit: result.strVal = n.strVal
+  of nkUnary, nkBinary:
+    result.op = n.op
+    result.a = cloneAst(n.a)
+    result.b = cloneAst(n.b)
+  of nkTry:
+    result.operand = cloneAst(n.operand)
+  of nkField:
+    result.obj = cloneAst(n.obj)
+    result.fieldName = n.fieldName
+  of nkCall:
+    result.callee = cloneAst(n.callee)
+    for a in n.args:
+      result.args.add cloneAst(a)
+    for a in n.genericArgs:
+      result.genericArgs.add cloneAst(a)
+  of nkPragma:
+    result.pragmaName = n.pragmaName
+    result.pragmaValue = n.pragmaValue
+  of nkFromImport:
+    result.modulePath = n.modulePath
+    result.names = n.names
+    result.importAll = n.importAll
+  of nkTypeDecl:
+    result.declName = n.declName
+    result.exportedDecl = n.exportedDecl
+    result.importedDecl = n.importedDecl
+    result.cNameDecl = n.cNameDecl
+    result.genericParams = n.genericParams
+    for p in n.declPragmas:
+      result.declPragmas.add cloneAst(p)
+    for f in n.typeFields:
+      result.typeFields.add cloneAst(f)
+  of nkParam:
+    result.paramName = n.paramName
+    result.paramVar = n.paramVar
+    result.paramTypeNode = cloneAst(n.paramTypeNode)
+  of nkProcDecl:
+    result.procName = n.procName
+    result.exportedProc = n.exportedProc
+    result.genericParams = n.genericParams
+    for p in n.params:
+      result.params.add cloneAst(p)
+    result.retTypeNode = cloneAst(n.retTypeNode)
+    result.body = cloneAst(n.body)
+    for p in n.procPragmas:
+      result.procPragmas.add cloneAst(p)
+  of nkLet, nkVar:
+    result.varName = n.varName
+    result.varTypeNode = cloneAst(n.varTypeNode)
+    result.init = cloneAst(n.init)
+  of nkModule, nkBlock:
+    for s in n.stmts:
+      result.stmts.add cloneAst(s)
+  of nkDefer:
+    result.deferBody = cloneAst(n.deferBody)
+  of nkReturn, nkDiscard:
+    result.value = cloneAst(n.value)
+  of nkPtrType, nkResultType:
+    result.elemType = cloneAst(n.elemType)
+  of nkFieldDecl:
+    result.declFieldName = n.declFieldName
+    result.declFieldExported = n.declFieldExported
+    result.declFieldType = cloneAst(n.declFieldType)
+  of nkNamedField:
+    result.namedName = n.namedName
+    result.namedValue = cloneAst(n.namedValue)
+  of nkAssign:
+    result.lhs = cloneAst(n.lhs)
+    result.rhs = cloneAst(n.rhs)
+  of nkDeref:
+    result.derefObj = cloneAst(n.derefObj)

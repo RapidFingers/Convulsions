@@ -1,0 +1,12 @@
+{.profile: kernel.}
+import core/io
+
+proc loop[T](x: T): T =
+  return loop[T](x)
+
+proc useLoop(): void =
+  discard loop[int](1)
+
+proc main(): !void =
+  discard 1
+  try println("gen-recursive-ok")

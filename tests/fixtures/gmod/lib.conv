@@ -1,0 +1,11 @@
+{.profile: kernel.}
+
+type
+  Box*[T] = object
+    value*: T
+  Secret*[T] = object
+    value*: T
+    hidden: T
+
+proc identity*[T](x: T): T =
+  return x

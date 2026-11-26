@@ -1,0 +1,7 @@
+{.profile: kernel.}
+
+proc id(x: int): int =
+  return x
+
+proc main(): !void =
+  assert(id[int](5) == 5)

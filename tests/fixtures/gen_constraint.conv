@@ -1,0 +1,12 @@
+{.profile: kernel.}
+
+type
+  Numeric* = object
+    x*: int
+
+proc f[T: Numeric](x: T): T =
+  return x
+
+proc main(): !void =
+  let n = Numeric(x: 1)
+  discard f(n)
