@@ -1,7 +1,7 @@
 {.profile: kernel.}
-from core/mem import cAllocator, pageAllocator, arenaAllocator, initDebug, arenaDeinit, debugReport, debugDeinit
-from core/string import concat
-from core/io import println
+import core/mem
+import core/string
+import core/io
 
 type
   Node* = object

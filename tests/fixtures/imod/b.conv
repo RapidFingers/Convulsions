@@ -1,0 +1,4 @@
+{.profile: kernel.}
+
+proc foo*(): int =
+  return 2

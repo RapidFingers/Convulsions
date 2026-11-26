@@ -1,8 +1,8 @@
 {.profile: kernel.}
 
-from core/mem import cAllocator
-from core/string import concat
-from core/io import println
+import core/mem
+import core/string
+import core/io
 
 proc main(): !void =
   let a = cAllocator()

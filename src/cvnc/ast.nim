@@ -47,6 +47,7 @@ type
     of nkFromImport:
       modulePath*: string
       names*: seq[string]
+      importAll*: bool
     of nkTypeDecl:
       declName*: string
       exportedDecl*: bool
@@ -108,7 +109,9 @@ proc dumpAst*(n: AstNode; indent = 0): string =
   of nkCharLit: result.add " '" & $n.charVal & "'"
   of nkStrLit: result.add " " & repr(n.strVal)
   of nkPragma: result.add " " & n.pragmaName & "=" & n.pragmaValue
-  of nkFromImport: result.add " " & n.modulePath
+  of nkFromImport:
+    result.add " " & n.modulePath
+    if n.importAll: result.add " *"
   of nkTypeDecl: result.add " " & n.declName
   of nkFieldDecl: result.add " " & n.declFieldName
   of nkNamedField: result.add " " & n.namedName

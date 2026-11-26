@@ -1,4 +1,4 @@
-# Convulsions MVP (v0.6): kernel, UTF-8, объекты, аллокаторы, отладка утечек
+# Convulsions MVP (v0.7): kernel, UTF-8, объекты, аллокаторы, отладка утечек
 
 Минимальный компилятор языка Convulsions: профиль `kernel`, бэкенд `native`
 (HIR → C11 → gcc). Реализует hello world, UTF-8-модель `string` (README §6.7),
@@ -29,7 +29,7 @@ leak-debug ok
 
 | Область | Что работает |
 |---|---|
-| Модули | `{.profile: kernel.}`, `{.header.}`, `from m/path import a, b`, `*`-экспорт, запрет циклов |
+| Модули | `{.profile: kernel.}`, `{.header.}`, `import m/path` (все экспорты), `from m/path import a, b`, `*`-экспорт, запрет циклов |
 | Типы | `void`, `int`, `bool`, `char`, `string`, `Rune`, `pointer`, `ptr T`, `!T`, `object` с полями, непрозрачный `{.importc.}`-`object` |
 | Литералы | целые, строковые `"..."`, байтовые `b"..."`, char `'a'`/`'\xFF'` |
 | Объекты | `T(f: v, ...)`, `T()`, `p.x`, `p.a.b`, `p = q`, копии, вложенность, `ptr`-поля |
@@ -40,6 +40,11 @@ leak-debug ok
 | Операторы | `let`, `var`, `return`, `discard`, `defer:`, `try`, `assert(cond[, "msg"])`, присваивание `lhs = expr` |
 | UTF-8 | `runeAt`, `runeOffset`, `runeLen`, `validate`, `rune(x)`, `fromRune`, `Rune(char)`, `int(char/Rune)` |
 | FFI | `{.importc, cdecl.}`, `{.header.}`, возврат `!T` |
+
+`import core/mem` вносит все `*`-экспорты модуля; `from core/mem import a, b` —
+только перечисленные. Конфликт имени с уже импортированным/объявленным —
+`E-DUP-SYMBOL`; приватные имена не импортируются. Все примеры используют
+`import`.
 
 Не поддерживается (ошибка `E-UNSUPPORTED` с версией): `if/while/for`,
 `catch:`/`errdefer`, `seq`, `union`/`enum`/`distinct`, `class`/`interface`,
@@ -220,6 +225,6 @@ $ nimble test
 - e2e: hello, defer-LIFO, UTF-8, объекты, аллокация объектов
   (`examples/objects_alloc.conv`), отладка утечек
   (`examples/leak_debug.conv`, `obj_leak_auto.conv`), `examples/allocators.conv`,
-  `--emit-c` (детерминизм);
+  import-all (`import m`), `--emit-c` (детерминизм);
 - негативы: ошибки компилятора, OOM fixed, bad align, null allocator,
   stack LIFO, double free, неверный размер, redzone, утечка.

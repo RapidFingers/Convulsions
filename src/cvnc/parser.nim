@@ -117,19 +117,22 @@ proc parsePragmaBlock(p: var Parser): seq[AstNode] =
     break
   discard p.expect(tkPragmaClose, ".}")
 
-proc parseFromImport(p: var Parser): AstNode =
-  let start = p.cur
-  discard p.advance() # from
+proc parseModulePath(p: var Parser): string =
   if not p.at(tkIdent):
     p.failTok("E-PARSE", "ожидался путь модуля")
-  var path = p.cur.text
+  result = p.cur.text
   discard p.advance()
   while p.atOp("/"):
     discard p.advance()
     if not p.at(tkIdent):
       p.failTok("E-PARSE", "ожидался сегмент пути модуля")
-    path.add "/" & p.cur.text
+    result.add "/" & p.cur.text
     discard p.advance()
+
+proc parseFromImport(p: var Parser): AstNode =
+  let start = p.cur
+  discard p.advance() # from
+  let path = p.parseModulePath()
   discard p.expectKw(kwImport, "import")
   var names: seq[string]
   while true:
@@ -144,6 +147,15 @@ proc parseFromImport(p: var Parser): AstNode =
   result = newNode(nkFromImport, start.line, start.col)
   result.modulePath = path
   result.names = names
+
+proc parseImport(p: var Parser): AstNode =
+  let start = p.cur
+  discard p.advance() # import
+  let path = p.parseModulePath()
+  result = newNode(nkFromImport, start.line, start.col)
+  result.modulePath = path
+  result.names = @[]
+  result.importAll = true
 
 proc parseTypeExpr(p: var Parser): AstNode
 proc parseStmt(p: var Parser): AstNode
@@ -618,8 +630,11 @@ proc parseModule*(toks: seq[Token]; path: string): AstNode =
     for pr in p.parsePragmaBlock():
       result.stmts.add pr
     p.skipNewlines()
-  while p.atKw(kwFrom):
-    result.stmts.add p.parseFromImport()
+  while p.atKw(kwFrom) or p.atKw(kwImport):
+    if p.atKw(kwFrom):
+      result.stmts.add p.parseFromImport()
+    else:
+      result.stmts.add p.parseImport()
     p.skipNewlines()
   while not p.at(tkEof):
     if p.at(tkPragmaOpen):

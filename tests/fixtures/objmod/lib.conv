@@ -7,3 +7,6 @@ type
 
 proc makeWidget*(id: int): Widget =
   return Widget(id: id, secret: 42)
+
+proc hidden(): int =
+  return 1

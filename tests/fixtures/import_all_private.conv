@@ -1,0 +1,5 @@
+{.profile: kernel.}
+import objmod/lib
+
+proc main(): !void =
+  assert(hidden() == 1)

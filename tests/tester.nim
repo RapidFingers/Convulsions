@@ -273,6 +273,9 @@ let negatives = [
   ("obj_ptr_rebind_let.conv", "E-IMMUTABLE"),
   ("obj_deref_nonptr.conv", "E-TYPE"),
   ("obj_index_unsupported.conv", "E-UNSUPPORTED"),
+  ("import_all_private.conv", "E-UNDEF"),
+  ("import_conflict.conv", "E-DUP-SYMBOL"),
+  ("import_local_conflict.conv", "E-DUP-SYMBOL"),
 ]
 
 for item in negatives:
@@ -514,11 +517,20 @@ block:
     check "Node" in r.output, "leak-auto: тип"
     check "obj_leak_auto.conv" in r.output, "leak-auto: место"
 
+# ---------------------------------------------------------------- e2e: import
+block:
+  let b = buildFixture("import_all_ok.conv", "import_all_ok")
+  checkEq b.code, 0, "import-all: собирается (" & b.output & ")"
+  if b.code == 0:
+    let r = run(b.exe, @[])
+    checkEq r.code, 0, "import-all: exit code"
+    checkEq r.output, "import-all-ok\n", "import-all: stdout"
+
 # ---------------------------------------------------------------- e2e: version
 block:
   let r = run(cvn, @["version"])
   checkEq r.code, 0, "version: exit code"
-  check "0.6.0" in r.output, "version: номер версии"
+  check "0.7.0" in r.output, "version: номер версии"
 
 if failures > 0:
   echo "\n", failures, " проверок провалено"

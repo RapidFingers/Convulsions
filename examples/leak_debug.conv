@@ -1,6 +1,6 @@
 {.profile: kernel.}
-from core/mem import cAllocator, initDebug, debugCheck, debugReport, debugDeinit
-from core/io import println
+import core/mem
+import core/io
 
 type
   Node* = object

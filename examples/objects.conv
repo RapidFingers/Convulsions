@@ -1,5 +1,5 @@
 {.profile: kernel.}
-from core/io import println
+import core/io
 
 type
   Point* = object

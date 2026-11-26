@@ -1,0 +1,8 @@
+{.profile: kernel.}
+import objmod/lib
+import core/io
+
+proc main(): !void =
+  var w = makeWidget(7)
+  assert(w.id == 7)
+  try println("import-all-ok")

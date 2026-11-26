@@ -1,0 +1,6 @@
+{.profile: kernel.}
+import imod/a
+import imod/b
+
+proc main(): !void =
+  assert(foo() == 1)

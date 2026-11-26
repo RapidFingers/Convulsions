@@ -3,7 +3,7 @@
 import std/[os, strutils]
 import cvnc/[diag, options, driver]
 
-const Version = "0.6.0"
+const Version = "0.7.0"
 
 proc usage() =
   echo """cvn """ & Version & """ — Convulsions compiler (kernel MVP)

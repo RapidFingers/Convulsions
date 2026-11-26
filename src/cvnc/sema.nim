@@ -1,6 +1,6 @@
 ## Семантический анализ: имена, типы, импорты, профиль, builtin deinit.
 
-import std/[tables, strutils]
+import std/[tables, strutils, algorithm]
 import diag, ast, types, symbols, options
 
 type
@@ -259,20 +259,33 @@ proc setupModule(s: Sema; m: ModuleInfo) =
   m.scope = newScope(nil)
   for imp in m.importNodes:
     let child = m.imported[imp.modulePath]
-    for name in imp.names:
-      if child.exports.hasKey(name):
-        let sym = child.exports[name]
+    if imp.importAll:
+      var names: seq[string]
+      for name in child.exports.keys:
+        names.add name
+      names.sort()
+      for name in names:
         if m.scope.hasOwn(name):
           fail("E-DUP-SYMBOL", m.file, imp.line, imp.col,
-               "имя '" & name & "' уже импортировано")
-        m.scope.define(sym)
-      elif child.scope != nil and child.scope.hasOwn(name):
-        fail("E-PRIVATE", m.file, imp.line, imp.col,
-             "имя '" & name & "' не экспортируется модулем " & imp.modulePath,
-             "экспорт помечается '*' в объявлении")
-      else:
-        fail("E-UNDEF", m.file, imp.line, imp.col,
-             "модуль '" & imp.modulePath & "' не экспортирует '" & name & "'")
+               "имя '" & name & "' уже импортировано или объявлено",
+               "import " & imp.modulePath & " вносит все экспорты; " &
+               "конфликтующие имена импортируйте выборочно через from")
+        m.scope.define(child.exports[name])
+    else:
+      for name in imp.names:
+        if child.exports.hasKey(name):
+          let sym = child.exports[name]
+          if m.scope.hasOwn(name):
+            fail("E-DUP-SYMBOL", m.file, imp.line, imp.col,
+                 "имя '" & name & "' уже импортировано")
+          m.scope.define(sym)
+        elif child.scope != nil and child.scope.hasOwn(name):
+          fail("E-PRIVATE", m.file, imp.line, imp.col,
+               "имя '" & name & "' не экспортируется модулем " & imp.modulePath,
+               "экспорт помечается '*' в объявлении")
+        else:
+          fail("E-UNDEF", m.file, imp.line, imp.col,
+               "модуль '" & imp.modulePath & "' не экспортирует '" & name & "'")
   for stmt in m.ast.stmts:
     if stmt.kind == nkTypeDecl:
       s.declareTypeShell(stmt)
