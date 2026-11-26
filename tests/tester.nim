@@ -299,12 +299,25 @@ block:
   let b = run("gcc", @["-std=c11", "-Wall", "-Wextra", "-Werror",
                        "-I", runtime, "-o", ctest,
                        root / "tests" / "rt" / "test_utf.c",
-                       runtime / "cvnrt.c"])
+                       runtime / "cvnrt.c", runtime / "cvnrt_alloc.c"])
   checkEq b.code, 0, "c-unit: сборка (" & b.output & ")"
   if b.code == 0:
     let r = run(ctest, @[])
     checkEq r.code, 0, "c-unit: запуск (" & r.output & ")"
     check "c-utf-ok" in r.output, "c-unit: маркер"
+
+# ------------------------------------------------------- C-юниты аллокаторов
+block:
+  let ctest = tmp / ("test_alloc" & ExeSuffix)
+  let b = run("gcc", @["-std=c11", "-Wall", "-Wextra", "-Werror",
+                       "-I", runtime, "-o", ctest,
+                       root / "tests" / "rt" / "test_alloc.c",
+                       runtime / "cvnrt.c", runtime / "cvnrt_alloc.c"])
+  checkEq b.code, 0, "c-alloc: сборка (" & b.output & ")"
+  if b.code == 0:
+    let r = run(ctest, @[])
+    checkEq r.code, 0, "c-alloc: запуск (" & r.output & ")"
+    check "c-alloc-ok" in r.output, "c-alloc: маркер"
 
 # ------------------------------------------------------------------ e2e: UTF-8
 block:
@@ -374,11 +387,59 @@ for item in objPositives:
     checkEq r.code, 0, item[0] & ": exit code"
     checkEq r.output, item[2], item[0] & ": stdout"
 
+# ------------------------------------------------------------ e2e: аллокаторы
+block:
+  let exe = tmp / "allocators"
+  let b = run(cvn, @["build", root / "examples" / "allocators.conv",
+                     "-o", exe,
+                     "--path=" & stdlib, "--runtime-path=" & runtime])
+  checkEq b.code, 0, "alloc: пример собирается (" & b.output & ")"
+  if b.code == 0:
+    var e = exe
+    if not fileExists(e) and fileExists(exe & ExeSuffix):
+      e = exe & ExeSuffix
+    let r = run(e, @[])
+    checkEq r.code, 0, "alloc: exit code"
+    checkEq r.output, "allocators ok\n", "alloc: stdout"
+
+let allocPositives = [
+  ("alloc_debug_check_false.conv", "alloc_dbg_check", "debug-check-ok\n"),
+  ("alloc_arena_debug.conv", "alloc_arena_dbg", "arena-debug-ok\n"),
+]
+
+for item in allocPositives:
+  let b = buildFixture(item[0], item[1])
+  checkEq b.code, 0, item[0] & ": собирается (" & b.output & ")"
+  if b.code == 0:
+    let r = run(b.exe, @[])
+    checkEq r.code, 0, item[0] & ": exit code"
+    checkEq r.output, item[2], item[0] & ": stdout"
+
+let allocNegatives = [
+  ("alloc_fixed_oom.conv", "alloc_fixed_oom", 1, "error[1]"),
+  ("alloc_bad_align.conv", "alloc_bad_align", 1, "error[4]"),
+  ("alloc_null.conv", "alloc_null", 1, "error[2]"),
+  ("alloc_zero_size.conv", "alloc_zero_size", 1, "error[3]"),
+  ("alloc_stack_lifo.conv", "alloc_stack_lifo", 3, "stack free out of order"),
+  ("alloc_debug_double_free.conv", "alloc_double_free", 3, "double free"),
+  ("alloc_debug_bad_size.conv", "alloc_bad_size", 3, "wrong size"),
+  ("alloc_debug_redzone.conv", "alloc_redzone", 3, "redzone corrupted"),
+  ("alloc_debug_leak.conv", "alloc_leak", 3, "leaked"),
+]
+
+for item in allocNegatives:
+  let b = buildFixture(item[0], item[1])
+  checkEq b.code, 0, item[0] & ": собирается (" & b.output & ")"
+  if b.code == 0:
+    let r = run(b.exe, @[])
+    checkEq r.code, item[2], item[0] & ": exit code"
+    check item[3] in r.output, item[0] & ": ожидался " & item[3]
+
 # ---------------------------------------------------------------- e2e: version
 block:
   let r = run(cvn, @["version"])
   checkEq r.code, 0, "version: exit code"
-  check "0.3.0" in r.output, "version: номер версии"
+  check "0.4.0" in r.output, "version: номер версии"
 
 if failures > 0:
   echo "\n", failures, " проверок провалено"

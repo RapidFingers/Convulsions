@@ -1,0 +1,9 @@
+{.profile: kernel.}
+from core/mem import cAllocator, stackAllocator, allocBytes, freeBytes
+
+proc main(): !void =
+  let st = stackAllocator(cAllocator(), 64)
+  let a = try allocBytes(st, 16)
+  let b = try allocBytes(st, 16)
+  freeBytes(st, a, 16)
+  freeBytes(st, b, 16)

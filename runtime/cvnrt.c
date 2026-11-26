@@ -14,36 +14,6 @@ _Static_assert(sizeof(cvn_allocator) == 16, "allocator ABI");
 _Static_assert(sizeof(cvn_string) == 40, "string ABI");
 _Static_assert(sizeof(cvn_error) == 24, "error ABI");
 
-static void *c_alloc(void *state, size_t size, size_t align) {
-  (void)state;
-  (void)align;
-  return malloc(size);
-}
-
-static void *c_realloc(void *state, void *oldp, size_t old_size,
-                       size_t new_size, size_t align) {
-  (void)state;
-  (void)old_size;
-  (void)align;
-  return realloc(oldp, new_size);
-}
-
-static void c_free(void *state, void *p, size_t size) {
-  (void)state;
-  (void)size;
-  free(p);
-}
-
-static const cvn_allocator_vtable c_vtable = {
-    1u, 0u, "cAllocator", c_alloc, c_realloc, c_free};
-
-cvn_allocator cvn_c_allocator(void) {
-  cvn_allocator a;
-  a.vtable = &c_vtable;
-  a.state = NULL;
-  return a;
-}
-
 static char cvn_empty_buf[1] = {0};
 const cvn_string cvn_str_empty = {cvn_empty_buf, 0, 1, {NULL, NULL}};
 

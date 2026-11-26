@@ -4,4 +4,77 @@
 type
   Allocator* {.importc: "cvn_allocator", header: "<cvnrt.h>".} = object
 
+proc nullAllocator*(): Allocator {.importc: "cvn_null_allocator", cdecl.}
 proc cAllocator*(): Allocator {.importc: "cvn_c_allocator", cdecl.}
+proc pageAllocator*(): Allocator {.importc: "cvn_page_allocator", cdecl.}
+proc taskAllocator*(): Allocator {.importc: "cvn_task_allocator", cdecl.}
+
+proc fixedAllocator*(buf: ptr char, size: int): Allocator
+  {.importc: "cvn_fixed_allocator", cdecl.}
+
+proc arenaAllocator*(backing: Allocator, chunk: int): Allocator
+  {.importc: "cvn_arena_allocator", cdecl.}
+
+proc stackAllocator*(backing: Allocator, size: int): Allocator
+  {.importc: "cvn_stack_allocator", cdecl.}
+
+proc initDebug*(backing: Allocator): Allocator
+  {.importc: "cvn_debug_allocator", cdecl.}
+
+proc allocBytes*(a: Allocator, n: int): !ptr char
+  {.importc: "cvn_alloc_bytes", cdecl.}
+
+proc allocAligned*(a: Allocator, n: int, align: int): !ptr char
+  {.importc: "cvn_alloc_aligned", cdecl.}
+
+proc allocZeroedBytes*(a: Allocator, n: int): !ptr char
+  {.importc: "cvn_alloc_zeroed", cdecl.}
+
+proc reallocBytes*(a: Allocator, p: ptr char, oldSize: int, newSize: int): !ptr char
+  {.importc: "cvn_realloc_bytes", cdecl.}
+
+proc reallocAligned*(a: Allocator, p: ptr char, oldSize: int, newSize: int,
+                     align: int): !ptr char
+  {.importc: "cvn_realloc_aligned", cdecl.}
+
+proc freeBytes*(a: Allocator, p: ptr char, size: int): void
+  {.importc: "cvn_free_bytes", cdecl.}
+
+proc fixedReset*(a: Allocator): void
+  {.importc: "cvn_fixed_reset", cdecl.}
+proc fixedDeinit*(a: Allocator): void
+  {.importc: "cvn_fixed_deinit", cdecl.}
+proc arenaReset*(a: Allocator): void
+  {.importc: "cvn_arena_reset", cdecl.}
+proc arenaDeinit*(a: Allocator): void
+  {.importc: "cvn_arena_deinit", cdecl.}
+proc stackMark*(a: Allocator): int
+  {.importc: "cvn_stack_mark", cdecl.}
+proc stackReset*(a: Allocator, mark: int): void
+  {.importc: "cvn_stack_reset", cdecl.}
+proc stackDeinit*(a: Allocator): void
+  {.importc: "cvn_stack_deinit", cdecl.}
+
+proc debugCheck*(a: Allocator): bool
+  {.importc: "cvn_debug_check", cdecl.}
+proc debugReport*(a: Allocator): int
+  {.importc: "cvn_debug_report", cdecl.}
+proc debugFailOnLeak*(a: Allocator): void
+  {.importc: "cvn_debug_fail_on_leak", cdecl.}
+proc debugDeinit*(a: Allocator): void
+  {.importc: "cvn_debug_deinit", cdecl.}
+
+proc isAligned*(p: ptr char, align: int): bool
+  {.importc: "cvn_is_aligned", cdecl.}
+proc isNilPtr*(p: ptr char): bool
+  {.importc: "cvn_is_null_ptr", cdecl.}
+proc ptrAddr*(p: ptr char): int
+  {.importc: "cvn_ptr_addr", cdecl.}
+proc memFill*(p: ptr char, value: char, n: int): void
+  {.importc: "cvn_mem_fill", cdecl.}
+proc memCopy*(dst: ptr char, src: ptr char, n: int): void
+  {.importc: "cvn_mem_copy", cdecl.}
+proc memByte*(p: ptr char, i: int): char
+  {.importc: "cvn_mem_byte", cdecl.}
+proc memSetByte*(p: ptr char, i: int, value: char): void
+  {.importc: "cvn_mem_set_byte", cdecl.}

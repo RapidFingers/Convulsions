@@ -280,7 +280,7 @@ $ ./build/server-fiber --listen :7777
 | Модуль | Содержимое | Статус |
 |---|---|---|
 | builtins | `taskAllocator`, `currentExecutor`, `panic`, `assert`, `unreachable`, `abort`, `sizeof`, `alignof`, `offsetof`, `deinit` | всегда, импорт не нужен |
-| `core/mem` | `Allocator`, `cAllocator`, `pageAllocator`, `fixedAllocator`, `arenaAllocator`, `stackAllocator`, `debugAllocator` | есть в 0.9.0 |
+| `core/mem` | `Allocator`, `nullAllocator`, `cAllocator`, `pageAllocator`, `fixedAllocator`, `arenaAllocator`, `stackAllocator`, `taskAllocator`, `initDebug`, байтовые `alloc*/free*` | есть в 0.9.0 |
 | `core/seq` | `newSeq`, `seqOf`, `dupe`, `add`, `setLen`, `toSlice` | есть в 0.9.0 |
 | `core/string` | `concat`, `dupe`, `find`, `split`, `runeAt`, `runeOffset`, `runeLen`, `runes`, `validate`, `rune`, `fromRune` | есть в 0.9.0 |
 | `core/error` | `ErrorCode`, `error`, `errorMessage`, `errorString` | есть в 0.9.0 |
@@ -776,6 +776,18 @@ type
 | `debugAllocator` | `initDebug(backing)` | redzone + учёт размеров + список живых | проверяет владельца и размер | нет | тесты, CI |
 | `taskAllocator` | `taskAllocator()` | зависит от исполнителя (§3.8) | вручную | по задаче | код, вызванный из задачи |
 
+Реализация v0.4 (ещё без классов и методов) использует функции:
+`fixedAllocator(buf, size)`, `fixedReset(a)`, `fixedDeinit(a)`, `arenaReset(a)`,
+`arenaDeinit(a)`, `stackMark(a)`/`stackReset(a, mark)`/`stackDeinit(a)`,
+`debugCheck(a)`/`debugReport(a)`/`debugFailOnLeak(a)`/`debugDeinit(a)`;
+`initDebug(backing)` возвращает `Allocator`, а не объект с методами.
+Вместо `alloc[T]`/`create(T)` пока действует байтовый API
+`allocBytes`/`allocAligned`/`allocZeroedBytes`/`reallocBytes`/`reallocAligned`/
+`freeBytes`; типизированные обёртки появятся вместе с `seq[T]` и дженериками.
+Проверки аллокаторов в v0.4 всегда включены (`debug`-обёртка и LIFO-проверки
+стека), `taskAllocator()` — аллокатор корневой задачи (`cAllocator`) до
+исполнителей (v0.6).
+
 ```conv
 # arena: всё временное умирает одним движением — но только явным
 var arena = arenaAllocator(pageAllocator(), 64 * 1024)
@@ -894,6 +906,11 @@ proc realloc*[T](a: Allocator, s: Slice[T], n: int): !Slice[T]
 proc dupe*[T](a: Allocator, s: Slice[T]): !seq[T]
 ```
 
+До появления generics/`seq[T]` (v0.4) те же операции доступны в байтовой
+форме: `allocBytes(a, n)`, `allocAligned(a, n, align)`, `allocZeroedBytes(a, n)`,
+`reallocBytes(a, p, oldSize, newSize)`, `reallocAligned(...)`, `freeBytes(a, p, size)`,
+возвращающие `!ptr char` и принимающие явный `size` (его требует vtable `free`).
+
 Жёсткие правила:
 
 1. `create`/`alloc`/`realloc` возвращают `!`, потому что OOM — обычная ошибка.
@@ -992,6 +1009,9 @@ proc taskAllocator*(): Allocator
   вызванный из `user` с этим аллокатором, обязан освобождать явно — GC не «подберёт».
 - Аллокатор задачи нельзя сохранять в глобальную переменную и использовать после
   завершения задачи: это UAF. Проверок нет.
+- В v0.4 исполнителей ещё нет: `taskAllocator()` — обычная функция `core/mem`,
+  возвращающая `cAllocator()` (аллокатор корневой задачи). Перенос в builtin и
+  настоящая per-task арена — вместе с `spawn`/`await` (v0.6).
 
 ### 3.9 Опасные места и что делать
 

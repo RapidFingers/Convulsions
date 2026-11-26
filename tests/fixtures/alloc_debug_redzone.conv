@@ -1,0 +1,8 @@
+{.profile: kernel.}
+from core/mem import cAllocator, initDebug, allocBytes, freeBytes, memSetByte
+
+proc main(): !void =
+  let d = initDebug(cAllocator())
+  let p = try allocBytes(d, 16)
+  memSetByte(p, 16, '\xAA')
+  freeBytes(d, p, 16)

@@ -1,0 +1,13 @@
+{.profile: kernel.}
+from core/mem import pageAllocator, fixedAllocator, allocBytes, freeBytes, fixedDeinit
+
+proc main(): !void =
+  let page = pageAllocator()
+  let buf = try allocBytes(page, 64)
+  defer: freeBytes(page, buf, 64)
+  let fx = fixedAllocator(buf, 64)
+  defer: fixedDeinit(fx)
+  let p1 = try allocBytes(fx, 48)
+  freeBytes(fx, p1, 48)
+  let p2 = try allocBytes(fx, 48)
+  freeBytes(fx, p2, 48)

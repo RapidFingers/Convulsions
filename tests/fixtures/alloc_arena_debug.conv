@@ -1,0 +1,13 @@
+{.profile: kernel.}
+from core/mem import cAllocator, initDebug, arenaAllocator, allocBytes, arenaDeinit, debugReport, debugDeinit
+from core/io import println
+
+proc main(): !void =
+  let d = initDebug(cAllocator())
+  defer: debugDeinit(d)
+  let ar = arenaAllocator(d, 64)
+  let p = try allocBytes(ar, 100)
+  discard p
+  arenaDeinit(ar)
+  assert(debugReport(d) == 0)
+  try println("arena-debug-ok")

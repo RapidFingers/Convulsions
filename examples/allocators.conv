@@ -1,0 +1,59 @@
+{.profile: kernel.}
+from core/mem import cAllocator, pageAllocator, taskAllocator, fixedAllocator, arenaAllocator, stackAllocator, initDebug, allocBytes, allocAligned, allocZeroedBytes, freeBytes, memFill, memByte, isAligned, isNilPtr, fixedReset, fixedDeinit, arenaReset, arenaDeinit, stackMark, stackReset, stackDeinit, debugCheck, debugReport, debugDeinit
+from core/io import println
+
+proc main(): !void =
+  let page = pageAllocator()
+  let buf = try allocBytes(page, 1024)
+  defer: freeBytes(page, buf, 1024)
+
+  let fx = fixedAllocator(buf, 1024)
+  defer: fixedDeinit(fx)
+  let p1 = try allocBytes(fx, 64)
+  assert(not isNilPtr(p1))
+  memFill(p1, 'A', 64)
+  assert(memByte(p1, 63) == 'A')
+  fixedReset(fx)
+  let p2 = try allocBytes(fx, 128)
+  assert(not isNilPtr(p2))
+  memFill(p2, 'B', 128)
+  assert(memByte(p2, 0) == 'B')
+
+  let ar = arenaAllocator(cAllocator(), 256)
+  defer: arenaDeinit(ar)
+  let a1 = try allocBytes(ar, 100)
+  memFill(a1, 'C', 100)
+  assert(memByte(a1, 99) == 'C')
+  arenaReset(ar)
+  let a2 = try allocBytes(ar, 100)
+  assert(not isNilPtr(a2))
+
+  let st = stackAllocator(cAllocator(), 4096)
+  defer: stackDeinit(st)
+  let mark = stackMark(st)
+  let s1 = try allocBytes(st, 32)
+  let s2 = try allocBytes(st, 32)
+  memFill(s1, 'D', 32)
+  memFill(s2, 'E', 32)
+  assert(memByte(s2, 31) == 'E')
+  freeBytes(st, s2, 32)
+  freeBytes(st, s1, 32)
+  stackReset(st, mark)
+
+  let big = try allocAligned(page, 10, 4096)
+  assert(isAligned(big, 4096))
+  freeBytes(page, big, 10)
+
+  let dbg = initDebug(cAllocator())
+  defer: debugDeinit(dbg)
+  let d1 = try allocZeroedBytes(dbg, 16)
+  assert(memByte(d1, 0) == '\0')
+  assert(debugCheck(dbg))
+  freeBytes(dbg, d1, 16)
+  assert(debugReport(dbg) == 0)
+
+  let ta = taskAllocator()
+  let t1 = try allocBytes(ta, 8)
+  freeBytes(ta, t1, 8)
+
+  try println("allocators ok")

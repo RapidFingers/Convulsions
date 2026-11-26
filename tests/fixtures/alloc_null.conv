@@ -1,0 +1,6 @@
+{.profile: kernel.}
+from core/mem import nullAllocator, allocBytes
+
+proc main(): !void =
+  let p = try allocBytes(nullAllocator(), 8)
+  discard p

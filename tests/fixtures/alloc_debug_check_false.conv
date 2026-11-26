@@ -1,0 +1,15 @@
+{.profile: kernel.}
+from core/mem import cAllocator, initDebug, allocBytes, freeBytes, memSetByte, debugCheck, debugReport, debugDeinit
+from core/io import println
+
+proc main(): !void =
+  let d = initDebug(cAllocator())
+  defer: debugDeinit(d)
+  let p = try allocBytes(d, 16)
+  memSetByte(p, 16, '\xAA')
+  assert(not debugCheck(d))
+  memSetByte(p, 16, '\xFD')
+  assert(debugCheck(d))
+  freeBytes(d, p, 16)
+  assert(debugReport(d) == 0)
+  try println("debug-check-ok")

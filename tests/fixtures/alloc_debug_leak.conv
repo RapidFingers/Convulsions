@@ -1,0 +1,8 @@
+{.profile: kernel.}
+from core/mem import cAllocator, initDebug, allocBytes, debugFailOnLeak
+
+proc main(): !void =
+  let d = initDebug(cAllocator())
+  let p = try allocBytes(d, 16)
+  discard p
+  debugFailOnLeak(d)

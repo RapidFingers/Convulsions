@@ -1,4 +1,4 @@
-version       = "0.3.0"
+version       = "0.4.0"
 author        = "Convulsions contributors"
 description   = "Convulsions compiler (kernel MVP: hello world via C11)"
 license       = "MIT"

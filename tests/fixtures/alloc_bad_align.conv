@@ -1,0 +1,6 @@
+{.profile: kernel.}
+from core/mem import cAllocator, allocAligned
+
+proc main(): !void =
+  let p = try allocAligned(cAllocator(), 8, 3)
+  discard p

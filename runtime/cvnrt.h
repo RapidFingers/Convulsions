@@ -95,7 +95,54 @@ typedef struct cvn_result_i64 {
   } u;
 } cvn_result_i64;
 
+/* !ptr T — указатель (в C хранится как void*, конверсия в T* неявная). */
+typedef struct cvn_result_ptr {
+  uint32_t tag;
+  uint32_t _pad;
+  union {
+    void *ok;
+    cvn_error err;
+  } u;
+} cvn_result_ptr;
+
+cvn_allocator     cvn_null_allocator(void);
 cvn_allocator     cvn_c_allocator(void);
+cvn_allocator     cvn_page_allocator(void);
+cvn_allocator     cvn_fixed_allocator(void *buf, int64_t size);
+cvn_allocator     cvn_arena_allocator(cvn_allocator backing, int64_t chunk);
+cvn_allocator     cvn_stack_allocator(cvn_allocator backing, int64_t size);
+cvn_allocator     cvn_debug_allocator(cvn_allocator backing);
+cvn_allocator     cvn_task_allocator(void);
+
+cvn_result_ptr    cvn_alloc_bytes(cvn_allocator a, int64_t n);
+cvn_result_ptr    cvn_alloc_aligned(cvn_allocator a, int64_t n, int64_t align);
+cvn_result_ptr    cvn_alloc_zeroed(cvn_allocator a, int64_t n);
+cvn_result_ptr    cvn_realloc_bytes(cvn_allocator a, void *p, int64_t oldn,
+                                    int64_t newn);
+cvn_result_ptr    cvn_realloc_aligned(cvn_allocator a, void *p, int64_t oldn,
+                                      int64_t newn, int64_t align);
+void              cvn_free_bytes(cvn_allocator a, void *p, int64_t n);
+
+void              cvn_fixed_reset(cvn_allocator a);
+void              cvn_fixed_deinit(cvn_allocator a);
+void              cvn_arena_reset(cvn_allocator a);
+void              cvn_arena_deinit(cvn_allocator a);
+int64_t           cvn_stack_mark(cvn_allocator a);
+void              cvn_stack_reset(cvn_allocator a, int64_t mark);
+void              cvn_stack_deinit(cvn_allocator a);
+bool              cvn_debug_check(cvn_allocator a);
+int64_t           cvn_debug_report(cvn_allocator a);
+void              cvn_debug_fail_on_leak(cvn_allocator a);
+void              cvn_debug_deinit(cvn_allocator a);
+
+bool              cvn_is_aligned(void *p, int64_t align);
+bool              cvn_is_null_ptr(void *p);
+int64_t           cvn_ptr_addr(void *p);
+void              cvn_mem_fill(void *p, uint8_t v, int64_t n);
+void              cvn_mem_copy(void *dst, void *src, int64_t n);
+uint8_t           cvn_mem_byte(void *p, int64_t i);
+void              cvn_mem_set_byte(void *p, int64_t i, uint8_t v);
+
 cvn_result_string cvn_str_concat(cvn_allocator a, cvn_string x, cvn_string y);
 void              cvn_str_deinit(cvn_string *s);
 cvn_error         cvn_io_println(cvn_string s);

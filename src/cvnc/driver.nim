@@ -73,9 +73,10 @@ proc build*(opts: BuildOptions): string =
       createDir(outDir)
 
     let runtimeDir = absolutePath(opts.runtimePath)
-    if not fileExists(runtimeDir / "cvnrt.c"):
+    if not fileExists(runtimeDir / "cvnrt.c") or
+       not fileExists(runtimeDir / "cvnrt_alloc.c"):
       fail("E-IO", opts.entry, 0, 0,
-           "рантайм не найден: " & (runtimeDir / "cvnrt.c"),
+           "рантайм не найден: " & runtimeDir,
            "укажите --runtime-path=<dir>")
     let cc = findCC(opts.cc)
     var args = @["-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
@@ -84,7 +85,8 @@ proc build*(opts: BuildOptions): string =
       for f in opts.cflags.splitWhitespace():
         if f.len > 0:
           args.add f
-    args.add @["-o", outAbs, absolutePath(cfile), runtimeDir / "cvnrt.c"]
+    args.add @["-o", outAbs, absolutePath(cfile), runtimeDir / "cvnrt.c",
+               runtimeDir / "cvnrt_alloc.c"]
 
     let r = runCC(cc, args)
     if r.code != 0:
