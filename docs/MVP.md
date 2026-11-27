@@ -1,12 +1,12 @@
-# Convulsions MVP (v0.11): kernel, UTF-8, объекты, аллокаторы, generics, fibers, sockets, ошибки
+# Convulsions MVP (v0.12): kernel, UTF-8, объекты, аллокаторы, generics, fibers, sockets, ошибки, Channel
 
 Минимальный компилятор языка Convulsions: профиль `kernel`, бэкенд `native`
 (HIR → C11 → gcc). Реализует hello world, UTF-8-модель `string` (README §6.7),
 value-объекты и их аллокацию в куче (§6.2, §3.6), аллокаторы (§3.2–3.8),
 отчёт об утечках с типом и `file:line`, мономорфизируемые дженерики (§6.3),
 `spawn`/`await` под исполнителем `fiber` с пулом воркеров и event loop (§4),
-TCP-сокеты поверх фибр и уровни обработки ошибок `try:`/`{.propagate.}`/
-частичный `catch:`/`errdefer`.
+TCP-сокеты поверх фибр, уровни обработки ошибок `try:`/`{.propagate.}`/
+частичный `catch:`/`errdefer` и fiber-aware `Channel` для producer–consumer.
 Спецификация языка — [../README.md](../README.md).
 
 ## Сборка и запуск
@@ -27,6 +27,8 @@ $ bin/cvn run examples/generics.conv
 generics ok
 $ bin/cvn run examples/error_levels.conv
 error-levels-ok
+$ bin/cvn run examples/producer_consumer.conv
+producer-consumer-ok
 $ bin/cvn run examples/fibers.conv
 fibers ok
 $ bin/cvn build examples/fibers.conv --workers=1 -o build/fibers1
@@ -52,6 +54,7 @@ hello
 | Отладка утечек | тип и `file:line` для `create`, `debugReport`, автоотчёт на exit, `CVN_DEBUG_FAIL_ON_LEAK=1` |
 | Дженерики | `[T]` у типов/процедур, `Box[int]`, вывод и явная конкретизация, вложенность, `create(Box[int])` |
 | Fibers | `spawn f(args)`, `await t`, `sleep(ms)`, пул воркеров, event loop, `--workers`, `--stack-size` |
+| Channel | `newChannel(a, capacity)`, `send`, `recv`, `closeChannel`, `freeChannel`; bounded строковый канал на fibers |
 | Control flow | `if/elif/else`, `while`, `break`, `continue`, `true/false` |
 | Ошибки | `try expr`, `try:`-блок, `{.propagate.}`, частичный `catch:` с `error.<Code>`, `errdefer:`, `panic` |
 | Сокеты | `core/net`: `Socket`, `listen/accept/connect/read/readInto/write/writeBytes/close/shutdownWrite/localPort`, TCP IPv4 |
@@ -308,6 +311,49 @@ DNS/IPv6/UDP/TLS нет. `read` аллоцирует строку (нужен `d
 В `if`/`while` нельзя `defer` (`E-DEFER-CONTROL`); в сервере defer — на
 уровне `handle`.
 
+## Producer–consumer на fibers
+
+`Channel` — ограниченный канал строк. `send` при заполнении и `recv` при
+опустошении уступают планировщику; это работает и с одним воркером.
+
+```conv
+proc producer(ch: Channel): !void {.propagate.} =
+  ch.send("alpha")
+  ch.send("beta")
+  ch.send("gamma")
+  ch.closeChannel()
+
+proc consumer(ch: Channel): !int =
+  var total = 0
+  while true:
+    let item = ch.recv() catch:
+      error.Closed => break
+      else => propagate
+    total = total + item.len
+    item.deinit()
+  return total
+
+proc main(): !void {.propagate.} =
+  let ch = newChannel(taskAllocator(), 1)
+  defer: ch.freeChannel()
+  let p = spawn producer(ch)
+  let c = spawn consumer(ch)
+  discard await p
+  let total = await c
+  assert(total == 14)
+  println("producer-consumer-ok")
+```
+
+- `send` передаёт владение строкой; `recv` возвращает владение; потребитель
+  обязан `deinit`.
+- `closeChannel` запрещает новые `send`, но позволяет дочитать очередь;
+  после опустошения `recv` даёт `error.Closed`.
+- `freeChannel` — только после завершения всех задач; пример делает это в
+  `defer` после `await`.
+- MVP: строковый payload и фиксированная ёмкость; generic `Channel[T]`,
+  unbounded, `select`/fan-in — позже. Ожидание — cooperative yield, не
+  wait queue.
+
 ## Ошибки: `try:`, `{.propagate.}`, `catch:`, `errdefer`
 
 Три уровня разворачивания `!T`:
@@ -395,9 +441,13 @@ runtime/cvnrt_alloc.c   аллокаторы, byte-API, debug, память
   не символизацию и не heap-профилирование; строки/`concat` не тегируются.
 - Дженерики: мономорфизация без constraints/`static`/частичного вывода;
   generic-процедура не является значением; перегрузки по типам нет.
-- Fibers: нет замыканий/захвата, preemption, `thread`-исполнителя, каналов,
-  отмены и per-task арен; задачa не мигрирует между воркерами; записи задач
+- Fibers: нет замыканий/захвата, preemption, `thread`-исполнителя, отмены и
+  per-task арен; задачa не мигрирует между воркерами; записи задач
   освобождаются только на shutdown.
+- Channel: только строковый payload и фиксированная ёмкость; нет generic
+  `Channel[T]`, unbounded, `select`/fan-in, отмены; ожидание — cooperative
+  yield (busy-переключения), а не wait queue; `freeChannel` только после
+  завершения всех задач.
 - Сокеты: только TCP IPv4 (numeric/`localhost`), без DNS/IPv6/UDP/TLS; одна
   незавершённая операция на сокет; `close` во время ожидания не поддержан;
   EOF — `error.Closed`. `defer`/`errdefer` внутри `if`/`while` запрещены
@@ -422,6 +472,8 @@ $ nimble test
   (`examples/leak_debug.conv`, `obj_leak_auto.conv`), `examples/allocators.conv`,
   import-all (`import m`), дженерики (`examples/generics.conv`,
   `generics_*.conv`), fibers (`examples/fibers.conv`, `fiber_*.conv`),
+  producer/consumer (`examples/producer_consumer.conv`,
+  `producer_consumer.conv` с `--workers=1` и обычным пулом),
   control flow (`flow_*.conv`), сокеты (`sockets_*.conv`,
   `examples/echo_server.conv`, `examples/echo_client.conv`),
   ошибки (`err_*.conv`, `examples/error_levels.conv`), `--emit-c`
@@ -429,5 +481,7 @@ $ nimble test
 - C-fiber: барьер автораспределения, вложенный await, таймеры, fd-readiness.
 - C-net: listen/accept/connect/read/write, EOF, connection refused, invalid
   host/port/kind.
+- C-channel: bounded ring, backpressure на одном воркере, close/Closed,
+  invalid capacity.
 - негативы: ошибки компилятора, OOM fixed, bad align, null allocator,
   stack LIFO, double free, неверный размер, redzone, утечка.

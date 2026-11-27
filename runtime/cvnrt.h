@@ -161,6 +161,14 @@ cvn_task *cvn_task_spawn(cvn_task_fn fn, const void *env,
 void      cvn_task_finish_current(const void *result, int64_t result_size);
 void     *cvn_task_await(cvn_task *t);
 void      cvn_sleep_ms(int64_t ms);
+void      cvn_task_yield(void);
+
+/* Fiber-aware строковый канал (v0.12). */
+cvn_result_ptr    cvn_channel_new(cvn_allocator a, int64_t capacity);
+cvn_error         cvn_channel_send(void *state, cvn_string value);
+cvn_result_string cvn_channel_recv(void *state);
+void              cvn_channel_close(void *state);
+void              cvn_channel_free(void *state);
 int       cvn_worker_id(void);
 cvn_error cvn_error_make(int32_t code);
 int       cvn_task_wait_fd(int fd, uint32_t events);

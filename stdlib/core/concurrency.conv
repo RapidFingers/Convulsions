@@ -1,4 +1,40 @@
 {.profile: kernel.}
 {.header: "<cvnrt.h>".}
+import core/mem
 
 proc sleep*(ms: int): void {.importc: "cvn_sleep_ms", cdecl.}
+
+type
+  Channel* = object
+    state: pointer
+
+proc cvnChannelNew(a: Allocator, capacity: int): !pointer
+  {.importc: "cvn_channel_new", cdecl.}
+
+proc cvnChannelSend(state: pointer, value: string): !void
+  {.importc: "cvn_channel_send", cdecl.}
+
+proc cvnChannelRecv(state: pointer): !string
+  {.importc: "cvn_channel_recv", cdecl.}
+
+proc cvnChannelClose(state: pointer): void
+  {.importc: "cvn_channel_close", cdecl.}
+
+proc cvnChannelFree(state: pointer): void
+  {.importc: "cvn_channel_free", cdecl.}
+
+proc newChannel*(a: Allocator, capacity: int): !Channel =
+  let st = try cvnChannelNew(a, capacity)
+  return Channel(state: st)
+
+proc send*(c: Channel, value: string): !void {.propagate.} =
+  cvnChannelSend(c.state, value)
+
+proc recv*(c: Channel): !string =
+  return cvnChannelRecv(c.state)
+
+proc closeChannel*(c: Channel): void =
+  cvnChannelClose(c.state)
+
+proc freeChannel*(c: Channel): void =
+  cvnChannelFree(c.state)

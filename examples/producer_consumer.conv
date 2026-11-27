@@ -1,0 +1,30 @@
+{.profile: kernel.}
+import core/concurrency
+import core/mem
+import core/io
+
+proc producer(ch: Channel): !void {.propagate.} =
+  ch.send("alpha")
+  ch.send("beta")
+  ch.send("gamma")
+  ch.closeChannel()
+
+proc consumer(ch: Channel): !int =
+  var total = 0
+  while true:
+    let item = ch.recv() catch:
+      error.Closed => break
+      else => propagate
+    total = total + item.len
+    item.deinit()
+  return total
+
+proc main(): !void {.propagate.} =
+  let ch = newChannel(taskAllocator(), 1)
+  defer: ch.freeChannel()
+  let p = spawn producer(ch)
+  let c = spawn consumer(ch)
+  discard await p
+  let total = await c
+  assert(total == 14)
+  println("producer-consumer-ok")

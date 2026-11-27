@@ -286,7 +286,7 @@ $ ./build/server-fiber --listen :7777
 | `core/error` | `ErrorCode`, `error`, `errorMessage`, `errorString` | есть в 0.9.0 |
 | `core/io` | `Fd`, `readFull`, `writeAll`, `println`, `listen`, `accept`, `close` | 0.9.0 (IOCP/epoll — M4) |
 | `core/net` | `Socket`, `listen`, `accept`, `connect`, `read`, `readInto`, `write`, `writeBytes`, `close`, `shutdownWrite`, `localPort` | v0.10, TCP IPv4 поверх fiber (EOF→Closed в v0.11) |
-| `core/concurrency` | `sleep`, `Task`, `Executor`-реализации, `Channel`, `Mutex`, `Select`, `parallel`, `withScope`, `spawnBlocking` | 0.9.0, кроме `Select` (v0.7) |
+| `core/concurrency` | `sleep`, `Channel`/`newChannel`/`send`/`recv`/`closeChannel`/`freeChannel`, `Task`, `Executor`-реализации, `Mutex`, `Select`, `parallel`, `withScope`, `spawnBlocking` | 0.9.0, кроме `Select` (v0.7); Channel — v0.12 |
 | `core/handle` | `GcHandle` (тип без GC-кода), упаковка `index << 32 \| gen` | v0.8 |
 | `core/gc` | `gcAllocator`, `gcHandle`, `gcRelease`, `gcDeref`, `gcAttachThread`, `gcDetachThread`, `foreignToException` | v0.8 |
 | `core/http` | `get`, `post`, `Server` | будет в v0.8 |
@@ -1111,6 +1111,12 @@ C-библиотеки; OS-поток — наоборот. Если бы фиб
 `defer`/`errdefer` остаются function-level (block-scope cleanup — позже).
 
 Спецификационные имена `core/io` (`listen`/`accept`) в MVP живут в `core/net`.
+
+Реализация v0.12: ограниченный `Channel` строк в `core/concurrency`
+(`newChannel(a, capacity)`, `send`, `recv`, `closeChannel`, `freeChannel`).
+Канал yield-ит фибру при заполнении/опустошении (`cvn_task_yield` через
+планировщик), поэтому producer–consumer работает и с `--workers=1`.
+Полезная нагрузка MVP — `string`; generic `Channel[T]` — следующий милстоун.
 
 ### 4.1 Что именно является языком, а что библиотекой
 

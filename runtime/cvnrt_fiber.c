@@ -829,6 +829,12 @@ void *cvn_task_await(cvn_task *t) {
   return t->result;
 }
 
+void cvn_task_yield(void) {
+  /* Кооперативная уступка через планировщик: паркуем задачу на 0 мс.
+     Это надёжнее прямого enqueue при одном воркере. */
+  cvn_sleep_ms(0);
+}
+
 void cvn_sleep_ms(int64_t ms) {
   cvn_task *t = tls_task;
   cvn_loop_cmd *cmd;

@@ -1,0 +1,7 @@
+{.profile: kernel.}
+import core/concurrency
+import core/mem
+
+proc main(): !void =
+  let ch = try newChannel(taskAllocator(), 0)
+  ch.freeChannel()

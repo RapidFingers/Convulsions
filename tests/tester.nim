@@ -460,6 +460,26 @@ block:
     checkEq r.code, 0, "c-net: запуск (" & r.output & ")"
     check "c-net-ok" in r.output, "c-net: маркер"
 
+# ---------------------------------------------------------- C-юнит channel
+block:
+  let ctest = tmp / ("test_channel" & ExeSuffix)
+  var args = @["-std=c11", "-Wall", "-Wextra", "-Werror",
+               "-I", runtime, "-o", ctest,
+               root / "tests" / "rt" / "test_channel.c",
+               runtime / "cvnrt.c", runtime / "cvnrt_alloc.c",
+               runtime / "cvnrt_fiber.c", runtime / "cvnrt_net.c",
+               runtime / "cvnrt_channel.c"]
+  when defined(windows):
+    args.add "-lws2_32"
+  else:
+    args.add "-pthread"
+  let b = run("gcc", args)
+  checkEq b.code, 0, "c-channel: сборка (" & b.output & ")"
+  if b.code == 0:
+    let r = run(ctest, @[])
+    checkEq r.code, 0, "c-channel: запуск (" & r.output & ")"
+    check "c-channel-ok" in r.output, "c-channel: маркер"
+
 # ------------------------------------------------------------------ e2e: UTF-8
 block:
   let b = buildFixture("utf_ok.conv", "utf_ok")
@@ -868,6 +888,7 @@ let errorRuntimeNegatives = [
   ("err_try_region.conv", "err_try_region", "error[3]"),
   ("err_propagate_forward.conv", "err_propagate_forward", "error[3]"),
   ("err_catch_unmatched.conv", "err_catch_unmatched", "error[3]"),
+  ("channel_bad_capacity.conv", "channel_bad_capacity", "error[3]"),
 ]
 
 for item in errorRuntimeNegatives:
@@ -884,11 +905,28 @@ block:
   checkEq b.code, 0, "error_levels: запуск (" & b.output & ")"
   checkEq b.output, "error-levels-ok\n", "error_levels: stdout"
 
+# ---------------------------------------------------------- e2e: producer/consumer
+for workers in [0, 1]:
+  var args = @["build", root / "tests" / "fixtures" / "producer_consumer.conv",
+               "-o", tmp / ("producer_consumer_" & $workers),
+               "--path=" & fixtures, "--path=" & stdlib,
+               "--runtime-path=" & runtime]
+  if workers > 0:
+    args.add "--workers=" & $workers
+  let b = run(cvn, args)
+  checkEq b.code, 0, "producer-consumer: сборка workers=" & $workers &
+            " (" & b.output & ")"
+  if b.code == 0:
+    let r = run(tmp / ("producer_consumer_" & $workers), @[])
+    checkEq r.code, 0, "producer-consumer: exit workers=" & $workers
+    checkEq r.output, "producer-consumer-ok\n",
+            "producer-consumer: stdout workers=" & $workers
+
 # ---------------------------------------------------------------- e2e: version
 block:
   let r = run(cvn, @["version"])
   checkEq r.code, 0, "version: exit code"
-  check "0.11.0" in r.output, "version: номер версии"
+  check "0.12.0" in r.output, "version: номер версии"
 
 if failures > 0:
   echo "\n", failures, " проверок провалено"
