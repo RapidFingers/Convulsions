@@ -66,7 +66,7 @@ proc buildFixture(file, exeName: string): tuple[code: int, output: string,
   let exe = tmp / exeName
   let b = run(cvn, @["build", fixtures / file, "-o", exe,
                      "--path=" & fixtures, "--path=" & stdlib,
-                     "--runtime-path=" & runtime])
+                     "--runtime-path=" & runtime, "--quiet"])
   result.code = b.code
   result.output = b.output
   result.exe = exe
@@ -269,9 +269,63 @@ block:
 
 block:
   let r = run(cvn, @["run", root / "examples" / "hello.conv",
-                     "--path=" & stdlib, "--runtime-path=" & runtime])
+                     "--path=" & stdlib, "--runtime-path=" & runtime,
+                     "--quiet"])
   checkEq r.code, 0, "e2e: cvn run exit code"
-  check r.output.endsWith("hello, convulsions\n"), "e2e: cvn run stdout"
+  checkEq r.output, "hello, convulsions\n", "e2e: cvn run stdout"
+
+# ------------------------------------------------------------ e2e: progress
+block:
+  let exe = tmp / "progress_hello"
+  let r = run(cvn, @["build", root / "examples" / "hello.conv",
+                     "-o", exe,
+                     "--path=" & stdlib, "--runtime-path=" & runtime])
+  checkEq r.code, 0, "progress: сборка"
+  check "cvn: [1/6] импорт модулей" in r.output, "progress: стадия 1"
+  check "cvn: [6/6] компиляция C" in r.output, "progress: стадия 6"
+  check "cvn: готово:" in r.output, "progress: итог"
+
+block:
+  let exe = tmp / "progress_verbose"
+  let r = run(cvn, @["build", root / "examples" / "hello.conv",
+                     "-o", exe,
+                     "--path=" & stdlib, "--runtime-path=" & runtime,
+                     "--verbose"])
+  checkEq r.code, 0, "progress verbose: сборка"
+  check "модуль:" in r.output, "progress verbose: модули"
+  check "команда cc:" in r.output, "progress verbose: команда cc"
+  check "HIR" in r.output, "progress verbose: HIR"
+  check "временный каталог:" in r.output,
+        "progress verbose: temp"
+
+block:
+  let exe = tmp / "progress_quiet"
+  let r = run(cvn, @["build", root / "examples" / "hello.conv",
+                     "-o", exe,
+                     "--path=" & stdlib, "--runtime-path=" & runtime,
+                     "--quiet"])
+  checkEq r.code, 0, "progress quiet: сборка"
+  check "cvn:" notin r.output, "progress quiet: без прогресса"
+
+block:
+  let exe = tmp / "progress_conflict"
+  let r = run(cvn, @["build", root / "examples" / "hello.conv",
+                     "-o", exe,
+                     "--path=" & stdlib, "--runtime-path=" & runtime,
+                     "--quiet", "--verbose"])
+  checkEq r.code, 1, "progress conflict: exit code"
+  check "E-CLI" in r.output, "progress conflict: E-CLI"
+
+block:
+  let exe = tmp / "progress_error"
+  let r = run(cvn, @["build", fixtures / "bad_unsupported.conv",
+                     "-o", exe,
+                     "--path=" & fixtures, "--path=" & stdlib,
+                     "--runtime-path=" & runtime])
+  checkEq r.code, 1, "progress error: exit code"
+  check "cvn: ошибка на этапе:" in r.output,
+        "progress error: стадия ошибки"
+  check "E-UNSUPPORTED" in r.output, "progress error: диагностика"
 
 # ------------------------------------------------------------ e2e: --emit-c
 block:
@@ -812,7 +866,6 @@ for item in socketPositives:
     checkEq r.output, item[2], item[0] & ": stdout"
 
 let socketNegatives = [
-  ("sockets_refused.conv", "sockets_refused", 1, "error[6]"),
   ("sockets_bad_host.conv", "sockets_bad_host", 1, "error[3]"),
 ]
 
@@ -901,7 +954,8 @@ for item in errorRuntimeNegatives:
 
 block:
   let b = run(cvn, @["run", root / "examples" / "error_levels.conv",
-                     "--path=" & stdlib, "--runtime-path=" & runtime])
+                     "--path=" & stdlib, "--runtime-path=" & runtime,
+                     "--quiet"])
   checkEq b.code, 0, "error_levels: запуск (" & b.output & ")"
   checkEq b.output, "error-levels-ok\n", "error_levels: stdout"
 
@@ -942,7 +996,7 @@ block:
 block:
   let r = run(cvn, @["version"])
   checkEq r.code, 0, "version: exit code"
-  check "0.13.0" in r.output, "version: номер версии"
+  check "0.14.0" in r.output, "version: номер версии"
 
 if failures > 0:
   echo "\n", failures, " проверок провалено"

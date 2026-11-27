@@ -1127,6 +1127,13 @@ C-библиотеки; OS-поток — наоборот. Если бы фиб
 `newBuffer`/`view`/`deinitBuffer` — для чтения. C-ABI сокетов остаётся
 `pointer + length`.
 
+Реализация v0.14: `cvn build`/`cvn run` печатают стадии в **stderr**
+(`импорт модулей → семантический анализ → HIR → генерация C → подготовка →
+cc`), счётчики и тайминги. `--verbose` добавляет пути, модули, HIR-счётчики и
+точную команду cc; `-q`/`--quiet` подавляет прогресс, оставляя ошибки.
+`-v` по-прежнему означает `version`; подробный режим — только `--verbose`.
+stdout остаётся для программы и `--dump-ast`/`--dump-hir`.
+
 ### 4.1 Что именно является языком, а что библиотекой
 
 | Есть в языке | Есть в `core/concurrency` |
@@ -2674,6 +2681,8 @@ JIT:
 | `--fiber-sanitizer` | ловит блокирующий вызов в фибре, потерянные задачи, двойной `await` |
 | `--dump-bytecode`, `--trace-jit`, `--jit`, `--interp-only`, `--jit-threshold=N` | VM-диагностика |
 | `--emit-c=dir`, `--cc`, `--cflags` | native-диагностика |
+| `--quiet`, `--verbose` | прогресс компилятора в stderr: кратко / подробно |
+| `--dump-ast`, `--dump-hir`, `--keep-temp` | дампы AST/HIR и сохранение temp |
 | `--workers=N`, `--stack-size`, `--mono-depth`, `--static-limit`, `--runtime-checks`, `--assert` | ограничения и проверки |
 | `--no-debug-allocator`, `--shim-debug`, `-d:symbol`, `--path` | прочее |
 

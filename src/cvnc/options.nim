@@ -3,6 +3,9 @@
 import std/[os, strutils]
 
 type
+  Verbosity* = enum
+    vQuiet, vNormal, vVerbose
+
   BuildOptions* = object
     entry*: string
     outFile*: string
@@ -17,6 +20,7 @@ type
     keepTemp*: bool
     workers*: int
     stackKb*: int
+    verbosity*: Verbosity
 
 proc defaultSearchPaths*(): seq[string] =
   let app = getAppDir()

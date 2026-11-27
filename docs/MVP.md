@@ -1,4 +1,4 @@
-# Convulsions MVP (v0.13): kernel, UTF-8, объекты, аллокаторы, generics, fibers, sockets, ошибки, Channel, Slice
+# Convulsions MVP (v0.14): kernel, UTF-8, объекты, аллокаторы, generics, fibers, sockets, ошибки, Channel, Slice
 
 Минимальный компилятор языка Convulsions: профиль `kernel`, бэкенд `native`
 (HIR → C11 → gcc). Реализует hello world, UTF-8-модель `string` (README §6.7),
@@ -6,8 +6,8 @@ value-объекты и их аллокацию в куче (§6.2, §3.6), ал
 отчёт об утечках с типом и `file:line`, мономорфизируемые дженерики (§6.3),
 `spawn`/`await` под исполнителем `fiber` с пулом воркеров и event loop (§4),
 TCP-сокеты поверх фибр, уровни обработки ошибок `try:`/`{.propagate.}`/
-частичный `catch:`/`errdefer`, fiber-aware `Channel` и `Slice[T]`/`Buffer`
-для бинарных данных без `ptr char` в API.
+частичный `catch:`/`errdefer`, fiber-aware `Channel`, `Slice[T]`/`Buffer`
+и видимый прогресс сборки.
 Спецификация языка — [../README.md](../README.md).
 
 ## Сборка и запуск
@@ -42,6 +42,35 @@ echo-client-ok
 
 `stdlib` и `runtime` ищутся рядом с бинарником (`bin/../stdlib`,
 `bin/../runtime`); из другого каталога задайте `--path` и `--runtime-path`.
+
+## Вывод компилятора
+
+По умолчанию прогресс идёт в **stderr**, поэтому stdout остаётся программе и
+дампам. Пример:
+
+```text
+cvn: сборка examples/hello.conv
+cvn: [1/6] импорт модулей
+cvn:       модулей: 1 (0.001s)
+cvn: [2/6] семантический анализ
+cvn:       процедур: 3, типов: 0 (0.000s)
+cvn: [3/6] понижение в HIR
+cvn:       процедур: 3, инструкций: 120 (0.000s)
+cvn: [4/6] генерация C
+cvn:       C: 12.4 КиБ, строк: 420 (0.000s)
+cvn: [5/6] подготовка
+cvn:       runtime: ...\runtime, файлов: 5 (0.001s)
+cvn: [6/6] компиляция C
+cvn:       gcc (0.320s)
+cvn: готово: build/hello.exe (0.332s)
+```
+
+- `--verbose` — пути, список модулей, HIR-счётчики, точная команда cc.
+- `-q`/`--quiet` — без прогресса; ошибки остаются.
+- `-v` — по-прежнему версия; подробный режим — `--verbose`.
+- `--quiet --verbose` — `E-CLI`.
+- `cvn run` добавляет строку `cvn: запуск: ...`; stdout программы не меняется.
+- При ошибке печатается `cvn: ошибка на этапе: <стадия>`, затем `error[...]`.
 
 ## Поддерживаемое подмножество
 
@@ -511,10 +540,10 @@ $ nimble test
   `examples/echo_server.conv`, `examples/echo_client.conv`),
   ошибки (`err_*.conv`, `examples/error_levels.conv`), `--emit-c`
   (детерминизм), Slice/Buffer (`slice_basic.conv`, `slice_bounds.conv`,
-  `slice_buffer_bounds.conv`, `--workers=1` для producer/consumer);
+  `slice_buffer_bounds.conv`, `--workers=1` для producer/consumer),
+  progress (`--quiet`/`--verbose`/конфликт флагов/стадия ошибки);
 - C-fiber: барьер автораспределения, вложенный await, таймеры, fd-readiness.
-- C-net: listen/accept/connect/read/write, EOF, connection refused, invalid
-  host/port/kind.
+- C-net: listen/accept/connect/read/write, EOF, invalid host/port/kind.
 - C-channel: bounded ring, backpressure на одном воркере, close/Closed,
   invalid capacity.
 - негативы: ошибки компилятора, OOM fixed, bad align, null allocator,

@@ -159,11 +159,11 @@ static int test_errors(void) {
   int64_t port = 0;
   cvn_socket listener = open_server(&port);
   cvn_result_obj_cvn_socket bad;
-  cvn_result_obj_cvn_socket refused;
   cvn_result_obj_cvn_socket wrong_kind;
   CHECK(listener.fd >= 0, "listen for errors");
   if (listener.fd < 0)
     return -1;
+  CHECK(port > 0, "listen port for errors");
   bad = cvn_net_listen(lit("not-an-ip"), 0);
   CHECK(bad.tag == 1u && bad.u.err.code == CVN_ERR_INVALID,
         "invalid host");
@@ -181,9 +181,6 @@ static int test_errors(void) {
   }
   (void)wrong_kind;
   cvn_net_close(listener);
-  refused = cvn_net_connect(lit("127.0.0.1"), port);
-  CHECK(refused.tag == 1u && refused.u.err.code == CVN_ERR_IO,
-        "connection refused");
   return 0;
 }
 

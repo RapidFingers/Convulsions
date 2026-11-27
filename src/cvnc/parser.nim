@@ -68,7 +68,7 @@ proc skipNewlines(p: var Parser) =
 
 proc unsupported(p: Parser; what, version: string) {.noreturn.} =
   p.failTok("E-UNSUPPORTED",
-            what & " не поддерживается в v0.13 (будет в " & version & ")",
+            what & " не поддерживается в v0.14 (будет в " & version & ")",
             "см. README и docs/MVP.md")
 
 proc versionFor(kw: Keyword): string =

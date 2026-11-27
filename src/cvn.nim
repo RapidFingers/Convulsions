@@ -1,9 +1,9 @@
 ## cvn — компилятор Convulsions (kernel MVP).
 
 import std/[os, strutils]
-import cvnc/[diag, options, driver]
+import cvnc/[diag, options, driver, progress]
 
-const Version = "0.13.0"
+const Version = "0.14.0"
 
 proc usage() =
   echo """cvn """ & Version & """ — Convulsions compiler (kernel MVP)
@@ -14,6 +14,7 @@ Usage:
     [--workers=N] [--stack-size=KB]
                          [--runtime-path=DIR] [--profile=kernel]
                          [--dump-ast] [--dump-hir] [--keep-temp]
+                         [-q|--quiet] [--verbose]
   cvn run <entry.conv> [-- <args>]
   cvn version
 
@@ -32,8 +33,11 @@ proc parseCli(argv: seq[string]): tuple[cmd: string, opts: BuildOptions,
     fail("E-CLI", "", 0, 0, "не указана команда (build, run, version)")
   result.cmd = argv[0]
   result.opts.profile = "kernel"
+  result.opts.verbosity = vNormal
   result.opts.searchPaths = defaultSearchPaths()
   result.opts.runtimePath = defaultRuntimePath()
+  var sawQuiet = false
+  var sawVerbose = false
   var i = 1
   while i < argv.len:
     let a = argv[i]
@@ -79,6 +83,12 @@ proc parseCli(argv: seq[string]): tuple[cmd: string, opts: BuildOptions,
       result.opts.dumpHir = true
     elif a == "--keep-temp":
       result.opts.keepTemp = true
+    elif a == "-q" or a == "--quiet":
+      sawQuiet = true
+      result.opts.verbosity = vQuiet
+    elif a == "--verbose":
+      sawVerbose = true
+      result.opts.verbosity = vVerbose
     elif a.startsWith("-"):
       fail("E-CLI", "", 0, 0, "неизвестный флаг: " & a)
     else:
@@ -87,6 +97,9 @@ proc parseCli(argv: seq[string]): tuple[cmd: string, opts: BuildOptions,
       else:
         result.progArgs.add a
     inc i
+  if sawQuiet and sawVerbose:
+    fail("E-CLI", "", 0, 0,
+         "флаги --quiet и --verbose взаимоисключающие")
 
 proc realMain(argv: seq[string]): int =
   let cmd = if argv.len > 0: argv[0] else: ""
@@ -110,6 +123,7 @@ proc realMain(argv: seq[string]): int =
          "профиль " & opts.profile & " не поддерживается в v0.1",
          "в 0.1 реализован только kernel (user — v0.8)")
 
+  initProgress(opts.verbosity, 6)
   if parsed.cmd == "build":
     discard build(opts)
     return 0
@@ -120,9 +134,11 @@ proc main() =
   try:
     quit(realMain(commandLineParams()))
   except CvnError as e:
+    progress.failStage()
     stderr.writeLine render(e)
     quit(1)
   except CatchableError as e:
+    progress.failStage()
     stderr.writeLine "error[E-INTERNAL]: " & e.msg
     quit(2)
 
