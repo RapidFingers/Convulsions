@@ -1,4 +1,4 @@
-## Рекурсивный спуск для подмножества MVP (README §3.2 плана).
+## Рекурсивный спуск для подмножества MVP (docs/DESIGN.md §3.2 плана).
 
 import std/strutils
 import diag, token, ast
@@ -69,7 +69,7 @@ proc skipNewlines(p: var Parser) =
 proc unsupported(p: Parser; what, version: string) {.noreturn.} =
   p.failTok("E-UNSUPPORTED",
             what & " не поддерживается в v0.14 (будет в " & version & ")",
-            "см. README и docs/MVP.md")
+            "см. docs/DESIGN.md и docs/MVP.md")
 
 proc versionFor(kw: Keyword): string =
   case kw
@@ -821,7 +821,7 @@ proc parseModule*(toks: seq[Token]; path: string): AstNode =
   while not p.at(tkEof):
     if p.at(tkPragmaOpen):
       p.failTok("E-PARSE",
-                "прагма модуля должна стоять до импортов (README §2.7)")
+                "прагма модуля должна стоять до импортов (docs/DESIGN.md §2.7)")
     for d in p.parseDecl():
       result.stmts.add d
     p.skipNewlines()

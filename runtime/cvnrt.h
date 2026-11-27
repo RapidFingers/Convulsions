@@ -1,7 +1,7 @@
 /*
  * cvnrt.h — минимальный рантайм Convulsions (kernel MVP).
  *
- * ABI зафиксирован README §3.4/§5.1/§8.2:
+ * ABI зафиксирован docs/DESIGN.md §3.4/§5.1/§8.2:
  *   cvn_allocator : 16 байт  {vtable, state}
  *   cvn_string    : 40 байт  {ptr, len, cap, alloc}
  *   cvn_error     : 24 байта {code, pad, payload, ctx}
@@ -17,7 +17,7 @@
 extern "C" {
 #endif
 
-/* Коды ошибок; порядок совпадает с README §5.1. */
+/* Коды ошибок; порядок совпадает с docs/DESIGN.md §5.1. */
 enum {
   CVN_OK             = 0,
   CVN_ERR_OOM        = 1,

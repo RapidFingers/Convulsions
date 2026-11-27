@@ -1,14 +1,14 @@
 # Convulsions MVP (v0.14): kernel, UTF-8, объекты, аллокаторы, generics, fibers, sockets, ошибки, Channel, Slice
 
 Минимальный компилятор языка Convulsions: профиль `kernel`, бэкенд `native`
-(HIR → C11 → gcc). Реализует hello world, UTF-8-модель `string` (README §6.7),
-value-объекты и их аллокацию в куче (§6.2, §3.6), аллокаторы (§3.2–3.8),
-отчёт об утечках с типом и `file:line`, мономорфизируемые дженерики (§6.3),
-`spawn`/`await` под исполнителем `fiber` с пулом воркеров и event loop (§4),
+(HIR → C11 → gcc). Реализует hello world, UTF-8-модель `string`,
+value-объекты и их аллокацию в куче, аллокаторы,
+отчёт об утечках с типом и `file:line`, мономорфизируемые дженерики,
+`spawn`/`await` под исполнителем `fiber` с пулом воркеров и event loop,
 TCP-сокеты поверх фибр, уровни обработки ошибок `try:`/`{.propagate.}`/
 частичный `catch:`/`errdefer`, fiber-aware `Channel`, `Slice[T]`/`Buffer`
 и видимый прогресс сборки.
-Спецификация языка — [../README.md](../README.md).
+Спецификация языка — [DESIGN.md](DESIGN.md).
 
 ## Сборка и запуск
 

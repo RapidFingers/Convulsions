@@ -1,7 +1,7 @@
 ## Лексер Convulsions: байтовый скан, INDENT/DEDENT, литералы.
 ##
 ## Колонки считаются в байтах, 1-based. Внутри `(`/`[`/`{.` переносы строк
-## не порождают tkNewline и отступы игнорируются (README §2.1).
+## не порождают tkNewline и отступы игнорируются (docs/DESIGN.md §2.1).
 
 import std/[strutils, unicode]
 import diag, token
@@ -302,7 +302,7 @@ proc scanOperator(l: var Lexer) =
       l.bump()
       return
     if c == ';':
-      l.failAt("E-LEX-CHAR", "точка с запятой запрещена (README §2.1)")
+      l.failAt("E-LEX-CHAR", "точка с запятой запрещена (docs/DESIGN.md §2.1)")
     l.addTokAt(tkOperator, $c, sl, sc)
     l.bump()
     return
