@@ -9,7 +9,8 @@ type
     hiExtractOk, hiMov, hiBinary, hiUnary, hiRet, hiRetVal, hiRetErrFrom,
     hiConv, hiStrLen, hiAssert, hiPathGet, hiPathSet, hiPathAddr,
     hiPathDeinit, hiLoadPtr, hiStorePtr, hiObjInit, hiObjCreate,
-    hiObjDestroy, hiSizeof, hiAlignof, hiOffsetof, hiSpawn, hiAwait, hiNop
+    hiObjDestroy, hiSizeof, hiAlignof, hiOffsetof, hiSpawn, hiAwait,
+    hiResultErrCode, hiNop
 
   HirInstr* = object
     op*: HirOp

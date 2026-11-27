@@ -4,20 +4,20 @@ import core/concurrency
 import core/mem
 import core/io
 
-proc handle(c: Socket): !void =
+proc handle(c: Socket): !void {.propagate.} =
   defer: c.close()
   let a = taskAllocator()
-  let buf = try allocBytes(a, 4096)
+  let buf = allocBytes(a, 4096)
   defer: freeBytes(a, buf, 4096)
   while true:
-    let n = try readInto(c, buf, 4096)
-    if n == 0:
-      break
-    try writeBytes(c, buf, n)
+    let n = readInto(c, buf, 4096) catch:
+      error.Closed => break
+      error.WouldBlock => continue
+    writeBytes(c, buf, n)
 
-proc main(): !void =
-  let l = try listen("0.0.0.0", 7700)
-  try println("echo server on 127.0.0.1:7700")
+proc main(): !void {.propagate.} =
+  let l = listen("0.0.0.0", 7700)
+  println("echo server on 127.0.0.1:7700")
   while true:
-    let c = try l.accept()
+    let c = l.accept()
     discard spawn handle(c)

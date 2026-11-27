@@ -1,0 +1,14 @@
+{.profile: kernel.}
+import core/string
+import core/io
+
+proc bad(): !int =
+  let q = try rune(0xD800)
+  return int(q)
+
+proc main(): !void {.propagate.} =
+  let x = bad() catch:
+    error.Invalid => 7
+    else => propagate
+  assert(x == 7)
+  println("catch-ok")

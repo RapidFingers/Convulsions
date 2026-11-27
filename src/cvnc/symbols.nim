@@ -22,6 +22,7 @@ type
     paramVars*: seq[bool]
     paramSyms*: seq[Symbol]
     builtin*: string
+    propagate*: bool
     isGeneric*: bool
     genericParams*: seq[string]
     typeArgs*: seq[Type]

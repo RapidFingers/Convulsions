@@ -362,6 +362,13 @@ let negatives = [
   ("flow_bad_break.conv", "E-LOOP-CONTROL"),
   ("flow_bad_defer.conv", "E-DEFER-CONTROL"),
   ("flow_bad_cond.conv", "E-TYPE"),
+  ("err_bad_coverage.conv", "E-CATCH-COVERAGE"),
+  ("err_bad_try_void.conv", "E-TRY-NO-RESULT"),
+  ("err_bad_propagate_void.conv", "E-PROPAGATE-RET"),
+  ("err_bad_propagate_catch.conv", "E-CATCH-PROPAGATE"),
+  ("err_catch_duplicate.conv", "E-DUP-CATCH"),
+  ("err_catch_unknown.conv", "E-ERROR-CODE"),
+  ("err_catch_else.conv", "E-CATCH-ELSE"),
 ]
 
 for item in negatives:
@@ -803,11 +810,85 @@ for ex in ["echo_server.conv", "echo_client.conv"]:
                      "--path=" & stdlib, "--runtime-path=" & runtime])
   checkEq b.code, 0, "sockets: пример " & ex & " собирается (" & b.output & ")"
 
+# ---------------------------------------------------------------- e2e: ошибки
+let errorPositives = [
+  ("err_try_value.conv", "err_try_value", ""),
+  ("err_try_last_call.conv", "err_try_last_call", ""),
+  ("err_try_arg.conv", "err_try_arg", ""),
+  ("err_propagate.conv", "err_propagate", "propagate-ok\n"),
+  ("err_propagate_spawn.conv", "err_propagate_spawn",
+   "spawn-propagate-ok\n"),
+  ("err_catch_partial.conv", "err_catch_partial", "catch-ok\n"),
+  ("err_catch_continue.conv", "err_catch_continue",
+   "catch-continue-ok\n"),
+]
+
+for item in errorPositives:
+  let b = buildFixture(item[0], item[1])
+  checkEq b.code, 0, item[0] & ": собирается (" & b.output & ")"
+  if b.code == 0:
+    let r = run(b.exe, @[])
+    checkEq r.code, 0, item[0] & ": exit code"
+    if item[2].len > 0:
+      checkEq r.output, item[2], item[0] & ": stdout"
+
+block:
+  let b = buildFixture("err_errdefer.conv", "err_errdefer")
+  checkEq b.code, 0, "errdefer: собирается (" & b.output & ")"
+  if b.code == 0:
+    let r = run(b.exe, @[])
+    checkEq r.code, 2, "errdefer: assert только на ошибке"
+    check "bad-errdefer" in r.output, "errdefer: успешный путь не должен срабатывать"
+
+block:
+  let b = buildFixture("err_errdefer_try.conv", "err_errdefer_try")
+  checkEq b.code, 0, "errdefer try: собирается (" & b.output & ")"
+  if b.code == 0:
+    let r = run(b.exe, @[])
+    checkEq r.code, 2, "errdefer try: exit code"
+    check "try-errdefer" in r.output, "errdefer try: сообщение"
+
+block:
+  let b = buildFixture("err_errdefer_return.conv", "err_errdefer_return")
+  checkEq b.code, 0, "errdefer return: собирается (" & b.output & ")"
+  if b.code == 0:
+    let r = run(b.exe, @[])
+    checkEq r.code, 2, "errdefer return: exit code"
+    check "forward-errdefer" in r.output, "errdefer return: сообщение"
+
+block:
+  let b = buildFixture("err_catch_panic.conv", "err_catch_panic")
+  checkEq b.code, 0, "catch panic: собирается (" & b.output & ")"
+  if b.code == 0:
+    let r = run(b.exe, @[])
+    checkEq r.code, 2, "catch panic: exit code"
+    check "panic: boom" in r.output, "catch panic: сообщение"
+
+let errorRuntimeNegatives = [
+  ("err_try_region.conv", "err_try_region", "error[3]"),
+  ("err_propagate_forward.conv", "err_propagate_forward", "error[3]"),
+  ("err_catch_unmatched.conv", "err_catch_unmatched", "error[3]"),
+]
+
+for item in errorRuntimeNegatives:
+  let b = buildFixture(item[0], item[1])
+  checkEq b.code, 0, item[0] & ": собирается (" & b.output & ")"
+  if b.code == 0:
+    let r = run(b.exe, @[])
+    checkEq r.code, 1, item[0] & ": exit code"
+    check item[2] in r.output, item[0] & ": ожидался " & item[2]
+
+block:
+  let b = run(cvn, @["run", root / "examples" / "error_levels.conv",
+                     "--path=" & stdlib, "--runtime-path=" & runtime])
+  checkEq b.code, 0, "error_levels: запуск (" & b.output & ")"
+  checkEq b.output, "error-levels-ok\n", "error_levels: stdout"
+
 # ---------------------------------------------------------------- e2e: version
 block:
   let r = run(cvn, @["version"])
   checkEq r.code, 0, "version: exit code"
-  check "0.10.0" in r.output, "version: номер версии"
+  check "0.11.0" in r.output, "version: номер версии"
 
 if failures > 0:
   echo "\n", failures, " проверок провалено"

@@ -38,6 +38,7 @@ cvn_error         cvn_net_write(cvn_socket s, cvn_string data);
 cvn_error         cvn_net_write_bytes(cvn_socket s, void *buf, int64_t n);
 
 void              cvn_net_close(cvn_socket s);
+void              cvn_net_shutdown_write(cvn_socket s);
 int64_t           cvn_net_local_port(cvn_socket s);
 
 #ifdef __cplusplus

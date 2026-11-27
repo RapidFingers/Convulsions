@@ -1,0 +1,12 @@
+{.profile: kernel.}
+import core/string
+
+proc get(): !int =
+  let r = try:
+    let q = rune(0xD800)
+    int(q)
+  return r
+
+proc main(): !void {.propagate.} =
+  let x = get()
+  discard x

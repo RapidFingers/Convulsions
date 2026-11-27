@@ -1,0 +1,11 @@
+{.profile: kernel.}
+import core/string
+
+proc f(): !void =
+  try:
+    errdefer: assert(false, "try-errdefer")
+    let q = try rune(0xD800)
+    discard q
+
+proc main(): !void {.propagate.} =
+  f()

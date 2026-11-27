@@ -1,0 +1,10 @@
+{.profile: kernel.}
+import core/string
+
+proc handle(): !void =
+  let q = try rune(0xD800)
+  discard q
+
+proc main(): void =
+  try:
+    discard 1

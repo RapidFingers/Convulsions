@@ -1,0 +1,12 @@
+{.profile: kernel.}
+import core/string
+import core/io
+
+proc get(): !int {.propagate.} =
+  let q = rune(65)
+  return int(q)
+
+proc main(): !void {.propagate.} =
+  let x = get()
+  assert(x == 65)
+  println("propagate-ok")

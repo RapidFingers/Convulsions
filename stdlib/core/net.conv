@@ -29,5 +29,8 @@ proc writeBytes*(s: Socket, buf: ptr char, n: int): !void
 proc close*(s: Socket): void
   {.importc: "cvn_net_close", cdecl.}
 
+proc shutdownWrite*(s: Socket): void
+  {.importc: "cvn_net_shutdown_write", cdecl.}
+
 proc localPort*(s: Socket): int
   {.importc: "cvn_net_local_port", cdecl.}

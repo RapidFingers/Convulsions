@@ -1,0 +1,14 @@
+{.profile: kernel.}
+import core/string
+
+proc id(x: int): int =
+  return x
+
+proc get(): !int =
+  let r = try:
+    id(int(rune(65)))
+  return r
+
+proc main(): !void {.propagate.} =
+  let x = get()
+  assert(x == 65)

@@ -1,0 +1,17 @@
+{.profile: kernel.}
+import core/string
+import core/io
+
+proc loop(): !void =
+  var n = 0
+  while n < 2:
+    n = n + 1
+    let q = rune(0xD800) catch:
+      error.Invalid => continue
+      else => propagate
+    discard q
+  assert(n == 2)
+
+proc main(): !void {.propagate.} =
+  loop()
+  println("catch-continue-ok")

@@ -1,0 +1,13 @@
+{.profile: kernel.}
+import core/string
+
+proc bad(): !void =
+  let q = try rune(0xD800)
+  discard q
+
+proc handle(): void =
+  bad() catch:
+    error.Invalid => panic("invalid")
+
+proc main(): !void =
+  handle()

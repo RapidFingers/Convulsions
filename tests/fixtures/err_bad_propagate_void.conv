@@ -1,0 +1,4 @@
+{.profile: kernel.}
+
+proc main(): void {.propagate.} =
+  discard 1

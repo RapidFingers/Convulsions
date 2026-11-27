@@ -1,0 +1,16 @@
+{.profile: kernel.}
+import core/string
+
+proc ok(): !void =
+  errdefer: assert(false, "ok-errdefer")
+  let q = try rune(65)
+  discard q
+
+proc bad(): !void =
+  errdefer: assert(false, "bad-errdefer")
+  let q = try rune(0xD800)
+  discard q
+
+proc main(): !void =
+  try ok()
+  try bad()

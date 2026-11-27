@@ -467,6 +467,8 @@ static DWORD WINAPI loop_thread_proc(LPVOID p) {
             ev |= CVN_IO_WRITE;
           if (re & (POLLERR | POLLHUP | POLLNVAL))
             ev |= CVN_IO_ERR;
+          if (ev == 0)
+            ev = CVN_IO_ERR;
           g_fds[i] = g_fds[g_fd_count - 1];
           g_fd_count--;
           wake_task(e.task, ev);
@@ -598,6 +600,8 @@ static void *loop_thread_proc(void *p) {
         if (evs[i].events & EPOLLERR)
           ev |= CVN_IO_ERR;
 #endif
+        if (ev == 0)
+          ev = CVN_IO_ERR;
         {
           int j = 0;
           while (j < g_fd_count) {

@@ -8,6 +8,7 @@ type
     toks: seq[Token]
     pos: int
     path: string
+    consumedBlock: bool
 
 proc cur(p: Parser): Token =
   p.toks[min(p.pos, p.toks.len - 1)]
@@ -67,7 +68,7 @@ proc skipNewlines(p: var Parser) =
 
 proc unsupported(p: Parser; what, version: string) {.noreturn.} =
   p.failTok("E-UNSUPPORTED",
-            what & " не поддерживается в v0.10 (будет в " & version & ")",
+            what & " не поддерживается в v0.11 (будет в " & version & ")",
             "см. README и docs/MVP.md")
 
 proc versionFor(kw: Keyword): string =
@@ -308,9 +309,13 @@ proc parseBlock(p: var Parser): AstNode =
     while not p.at(tkDedent) and not p.at(tkEof):
       let st = p.parseStmt()
       result.stmts.add st
-      # блок `defer:` съедает свой newline и dedent, поэтому следующим
-      # токеном может быть начало следующего оператора
-      if st.kind notin {nkDefer, nkIf, nkWhile} and
+      # блок `defer:`/`if:`/`try:`/`catch:` съедает свой newline и dedent,
+      # поэтому следующим токеном может быть начало следующего оператора
+      let consumed = p.consumedBlock
+      p.consumedBlock = false
+      if not consumed and
+         st.kind notin {nkDefer, nkErrdefer, nkIf, nkWhile, nkTryBlock,
+                        nkCatch} and
          p.cur.kind notin {tkNewline, tkDedent, tkEof}:
         p.failTok("E-PARSE", "ожидался конец строки")
       p.skipNewlines()
@@ -421,9 +426,16 @@ proc parseAtom(p: var Parser): AstNode =
     case t.kw
     of kwTry:
       discard p.advance()
-      let inner = p.parseUnary()
-      result = newNode(nkTry, t.line, t.col)
-      result.operand = inner
+      if p.at(tkColon):
+        discard p.advance()
+        let body = p.parseBlock()
+        result = newNode(nkTryBlock, t.line, t.col)
+        result.tryBody = body
+        p.consumedBlock = true
+      else:
+        let inner = p.parseUnary()
+        result = newNode(nkTry, t.line, t.col)
+        result.operand = inner
     of kwNot:
       discard p.advance()
       let inner = p.parseUnary()
@@ -464,6 +476,49 @@ proc parseUnary(p: var Parser): AstNode =
     result.a = inner
   else:
     result = p.parsePostfix()
+
+proc parseCatchArms(p: var Parser): seq[AstNode] =
+  discard p.expect(tkColon, ":")
+  discard p.expect(tkNewline, "перевод строки после 'catch:'")
+  discard p.expect(tkIndent, "ветки catch")
+  p.skipNewlines()
+  while not p.at(tkDedent) and not p.at(tkEof):
+    let at = p.cur
+    var isElse = false
+    var pname = ""
+    if p.atKw(kwElse):
+      discard p.advance()
+      isElse = true
+    elif p.at(tkIdent) and p.cur.text == "error" and
+         p.peek(1).kind == tkDot and p.peek(2).kind == tkIdent:
+      discard p.advance()
+      discard p.advance()
+      pname = p.cur.text
+      discard p.advance()
+    else:
+      p.failTok("E-PARSE", "ожидался error.<Code> или else в catch")
+    if not p.atOp("=>"):
+      p.failTok("E-PARSE", "ожидался '=>' в catch")
+    discard p.advance()
+    var action: AstNode
+    if p.atKw(kwBreak) or p.atKw(kwContinue):
+      action = p.parseStmt()
+    elif p.at(tkIdent) and p.cur.text == "propagate":
+      let pt = p.cur
+      discard p.advance()
+      action = newNode(nkPropagate, pt.line, pt.col)
+    else:
+      action = p.parseExpr()
+    var arm = newNode(nkCatchArm, at.line, at.col)
+    arm.patternName = pname
+    arm.isElse = isElse
+    arm.action = action
+    result.add arm
+    if p.cur.kind notin {tkNewline, tkDedent, tkEof}:
+      p.failTok("E-PARSE", "ожидался конец строки в catch")
+    p.skipNewlines()
+  discard p.expect(tkDedent, "конец catch")
+  p.consumedBlock = true
 
 proc parsePostfix(p: var Parser): AstNode =
   result = p.parseAtom()
@@ -541,6 +596,14 @@ proc parsePostfix(p: var Parser): AstNode =
           ta.appliedName = result.name
           ta.appliedArgs = args
           result = ta
+    elif p.atKw(kwCatch):
+      let t = p.cur
+      discard p.advance()
+      let arms = p.parseCatchArms()
+      var c = newNode(nkCatch, t.line, t.col)
+      c.catchOperand = result
+      c.catchArms = arms
+      result = c
     else:
       break
 
@@ -692,6 +755,10 @@ proc parseStmt(p: var Parser): AstNode =
       discard p.advance()
       result = newNode(nkDefer, t.line, t.col)
       result.deferBody = p.parseBodyAfterColon()
+    of kwErrdefer:
+      discard p.advance()
+      result = newNode(nkErrdefer, t.line, t.col)
+      result.edBody = p.parseBodyAfterColon()
     of kwReturn:
       discard p.advance()
       result = newNode(nkReturn, t.line, t.col)
@@ -704,8 +771,6 @@ proc parseStmt(p: var Parser): AstNode =
         p.failTok("E-PARSE", "discard требует выражение")
       result.value = p.parseExpr()
     of kwTry:
-      if p.peek(1).kind == tkColon:
-        p.unsupported("try:-блок", "v0.2")
       result = p.parseExpr()
     of kwProc, kwType, kwFrom, kwImport:
       p.failTok("E-UNSUPPORTED",

@@ -1,0 +1,12 @@
+{.profile: kernel.}
+import core/concurrency
+import core/io
+
+proc work(x: int): !int =
+  return x
+
+proc main(): !void {.propagate.} =
+  let t = spawn work(4)
+  let r = await t
+  assert(r == 4)
+  println("spawn-propagate-ok")

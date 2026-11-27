@@ -23,6 +23,7 @@ type
     builtins: Table[string, Type]
     builtinDeinit: Symbol
     builtinAssert: Symbol
+    builtinPanic: Symbol
     builtinSizes: Table[string, Symbol]
     builtinCreate: Symbol
     builtinDestroy: Symbol
@@ -33,6 +34,8 @@ type
     monoDepth: int
     loopDepth: int
     controlDepth: int
+    autoTryDepth: int
+    preserveResult: int
 
 proc addSym(s: Sema; sym: Symbol): int =
   sym.id = s.prog.syms.len
@@ -47,7 +50,23 @@ proc makeBuiltins(): Table[string, Type] =
   result["char"] = newType(tyChar, "char")
   result["string"] = newType(tyString, "string")
   result["Rune"] = newType(tyRune, "Rune")
+  result["ErrorCode"] = newType(tyErrorCode, "ErrorCode")
   result["pointer"] = newType(tyPointer, "pointer")
+
+proc errorCodeFor(name: string): int32 =
+  case name
+  of "OutOfMemory", "outOfMemory": 1'i32
+  of "NoAllocator", "noAllocator": 2'i32
+  of "Invalid", "invalid", "invalidArgument": 3'i32
+  of "BadAlignment", "badAlignment": 4'i32
+  of "Bounds", "bounds": 5'i32
+  of "Io", "io": 6'i32
+  of "Eof", "eof": 7'i32
+  of "Cancelled", "cancelled": 8'i32
+  of "Task", "task": 9'i32
+  of "Closed", "closed": 10'i32
+  of "WouldBlock", "wouldBlock": 11'i32
+  else: -1'i32
 
 proc push(s: Sema) =
   s.scopes.add newScope(s.scopes[^1])
@@ -79,6 +98,11 @@ proc pragmaVal(pragmas: seq[AstNode]; name: string): string =
   for p in pragmas:
     if p.pragmaName == name:
       return p.pragmaValue
+
+proc hasPragma(pragmas: seq[AstNode]; name: string): bool =
+  for p in pragmas:
+    if p.pragmaName == name:
+      return true
 
 proc addHeader(m: ModuleInfo; value: string) =
   if value.len > 0 and value notin m.headers:
@@ -324,7 +348,9 @@ proc declareProc(s: Sema; n: AstNode) =
   if s.curMod.scope.hasOwn(n.procName):
     fail("E-DUP-SYMBOL", s.curMod.file, n.line, n.col,
          "повторное объявление: " & n.procName)
-  s.validatePragmas(n.procPragmas, @["importc", "cdecl", "header"], "процедуры")
+  s.validatePragmas(n.procPragmas,
+                    @["importc", "cdecl", "header", "propagate"], "процедуры")
+  let wantPropagate = hasPragma(n.procPragmas, "propagate")
   if n.genericParams.len > 0:
     if pragmaVal(n.procPragmas, "importc").len > 0:
       fail("E-UNSUPPORTED", s.curMod.file, n.line, n.col,
@@ -335,7 +361,8 @@ proc declareProc(s: Sema; n: AstNode) =
     let ptype = newType(tyProc)
     let sym = Symbol(kind: skProc, name: n.procName, typ: ptype, node: n,
                      exported: n.exportedProc, modulePath: s.curMod.path,
-                     isGeneric: true, genericParams: n.genericParams)
+                     isGeneric: true, genericParams: n.genericParams,
+                     propagate: wantPropagate)
     for p in n.params:
       sym.paramNames.add p.paramName
       sym.paramVars.add p.paramVar
@@ -364,6 +391,9 @@ proc declareProc(s: Sema; n: AstNode) =
 
   let importName = pragmaVal(n.procPragmas, "importc")
   let isExternal = importName.len > 0
+  if isExternal and wantPropagate:
+    fail("E-UNSUPPORTED", s.curMod.file, n.line, n.col,
+         "{.propagate.} несовместима с importc")
   if isExternal and n.body != nil:
     fail("E-UNSUPPORTED", s.curMod.file, n.line, n.col,
          "importc-процедура не может иметь тело")
@@ -376,7 +406,8 @@ proc declareProc(s: Sema; n: AstNode) =
                    exported: n.exportedProc, external: isExternal,
                    modulePath: s.curMod.path,
                    cname: (if isExternal: importName
-                           else: procCName(s.curMod, n.procName)))
+                           else: procCName(s.curMod, n.procName)),
+                   propagate: wantPropagate)
   sym.paramNames = pnames
   sym.paramVars = pvars
   sym.typeEnv = initTable[string, Type]()
@@ -437,7 +468,8 @@ proc instantiateProc(s: Sema; tmpl: Symbol; args: seq[Type];
                     modulePath: tmpl.modulePath,
                     paramNames: tmpl.paramNames, paramVars: tmpl.paramVars,
                     templateId: tmpl.id, typeArgs: args,
-                    monoDepth: s.monoDepth + 1, typeEnv: bindings)
+                    monoDepth: s.monoDepth + 1, typeEnv: bindings,
+                    propagate: tmpl.propagate)
   discard s.addSym(inst)
   for i, p in clone.params:
     let psym = Symbol(kind: skParam, name: p.paramName,
@@ -542,6 +574,10 @@ proc sameOrCoerce(a, b: Type): bool =
   false
 
 proc analExpr(s: Sema; n: AstNode): Type
+proc analExprRaw(s: Sema; n: AstNode): Type
+proc analStmt(s: Sema; n: AstNode)
+proc analTryBlock(s: Sema; n: AstNode): Type
+proc analCatch(s: Sema; n: AstNode): Type
 
 proc astHasParam(n: AstNode; params: seq[string]): bool =
   if n.isNil:
@@ -890,6 +926,17 @@ proc analCall(s: Sema; n: AstNode): Type =
       n.symId = s.builtinAssert.id
       n.typ = s.builtins["void"]
       return n.typ
+    if cname == "panic" and s.lookup(cname).isNil:
+      if n.args.len != 1:
+        fail("E-ARG-COUNT", s.curMod.file, n.line, n.col,
+             "panic ожидает одно сообщение")
+      let ct = s.analExpr(n.args[0])
+      if ct.kind != tyString:
+        fail("E-TYPE", s.curMod.file, n.args[0].line, n.args[0].col,
+             "panic требует string, получен " & typeName(ct))
+      n.symId = s.builtinPanic.id
+      n.typ = s.builtins["void"]
+      return n.typ
     let sym = s.lookup(cname)
     if sym == nil:
       fail("E-UNDEF", s.curMod.file, n.callee.line, n.callee.col,
@@ -918,7 +965,7 @@ proc analCall(s: Sema; n: AstNode): Type =
     fail("E-UNSUPPORTED", s.curMod.file, n.line, n.col,
          "вызов произвольного выражения не поддерживается в v0.1 (v0.2)")
 
-proc analExpr(s: Sema; n: AstNode): Type =
+proc analExprRaw(s: Sema; n: AstNode): Type =
   case n.kind
   of nkIntLit:
     n.typ = s.builtins["int"]
@@ -956,7 +1003,9 @@ proc analExpr(s: Sema; n: AstNode): Type =
       fail("E-SPAWN-CALL", s.curMod.file, n.line, n.col,
            "spawn принимает только вызов процедуры",
            "например: spawn f(args)")
+    inc s.preserveResult
     let rt = s.analExpr(call)
+    dec s.preserveResult
     if call.symId < 0 or call.symId >= s.prog.syms.len:
       fail("E-SPAWN-CALL", s.curMod.file, n.line, n.col,
            "spawn не может вызвать это выражение")
@@ -1023,8 +1072,20 @@ proc analExpr(s: Sema; n: AstNode): Type =
     else:
       fail("E-UNSUPPORTED", s.curMod.file, n.line, n.col,
            "оператор '" & n.op & "' не поддерживается в v0.1")
+  of nkTryBlock:
+    discard s.analTryBlock(n)
+    result = n.typ
+  of nkCatch:
+    discard s.analCatch(n)
+    result = n.typ
+  of nkPropagate:
+    n.typ = s.builtins["void"]
+    n.diverges = true
+    result = n.typ
   of nkTry:
+    inc s.preserveResult
     let t = s.analExpr(n.operand)
+    dec s.preserveResult
     if t.kind != tyResult:
       fail("E-TYPE", s.curMod.file, n.line, n.col,
            "try применяется только к !T, получен " & typeName(t))
@@ -1035,6 +1096,13 @@ proc analExpr(s: Sema; n: AstNode): Type =
   of nkCall:
     discard s.analCall(n)
   of nkField:
+    if n.obj.kind == nkIdent and n.obj.name == "error" and
+       s.lookup("error") == nil:
+      let code = errorCodeFor(n.fieldName)
+      if code >= 0:
+        fail("E-UNSUPPORTED", s.curMod.file, n.line, n.col,
+             "error." & n.fieldName & " допустим только в паттернах catch:",
+             "например: catch: error." & n.fieldName & " => ...")
     let ot = s.analExpr(n.obj)
     if ot.kind == tyString and n.fieldName == "len":
       n.typ = s.builtins["int"]
@@ -1076,6 +1144,16 @@ proc analExpr(s: Sema; n: AstNode): Type =
   else:
     fail("E-PARSE", s.curMod.file, n.line, n.col, "неожиданный узел выражения")
   n.typ
+
+proc analExpr(s: Sema; n: AstNode): Type =
+  let t = s.analExprRaw(n)
+  n.typ = t
+  if s.autoTryDepth > 0 and s.preserveResult == 0 and t.kind == tyResult:
+    n.autoTry = true
+    n.autoResultType = t
+    n.typ = t.elem
+    return t.elem
+  t
 
 proc analStmt(s: Sema; n: AstNode) =
   case n.kind
@@ -1142,6 +1220,15 @@ proc analStmt(s: Sema; n: AstNode) =
     s.analStmt(n.deferBody)
     dec s.inDefer
     n.typ = s.builtins["void"]
+  of nkErrdefer:
+    if s.controlDepth > 0:
+      fail("E-DEFER-CONTROL", s.curMod.file, n.line, n.col,
+           "errdefer внутри if/while не поддерживается",
+           "вынесите errdefer на уровень процедуры")
+    inc s.inDefer
+    s.analStmt(n.edBody)
+    dec s.inDefer
+    n.typ = s.builtins["void"]
   of nkAssign:
     let lt = s.analExpr(n.lhs)
     let rt = s.analExpr(n.rhs)
@@ -1173,16 +1260,20 @@ proc analStmt(s: Sema; n: AstNode) =
         if n.value == nil:
           fail("E-MISSING-RETURN", s.curMod.file, n.line, n.col,
                "нужно вернуть значение типа " & typeName(ret.elem))
+        inc s.preserveResult
         let vt = s.analExpr(n.value)
-        if not sameType(vt, ret.elem):
+        dec s.preserveResult
+        if not sameType(vt, ret.elem) and not sameType(vt, ret):
           fail("E-TYPE", s.curMod.file, n.line, n.col,
                "возвращается " & typeName(vt) & ", ожидался " &
-               typeName(ret.elem))
+               typeName(ret.elem) & " или " & typeName(ret))
     else:
       if n.value == nil:
         fail("E-MISSING-RETURN", s.curMod.file, n.line, n.col,
              "нужно вернуть значение типа " & typeName(ret))
+      inc s.preserveResult
       let vt = s.analExpr(n.value)
+      dec s.preserveResult
       if not sameType(vt, ret):
         fail("E-TYPE", s.curMod.file, n.line, n.col,
              "возвращается " & typeName(vt) & ", ожидался " & typeName(ret))
@@ -1203,6 +1294,94 @@ proc analStmt(s: Sema; n: AstNode) =
       fail("E-DISCARD-REQUIRED", s.curMod.file, n.line, n.col,
            "значение типа " & typeName(t) & " не использовано; нужен discard")
 
+proc isValueExprKind(k: NodeKind): bool =
+  k in {nkIdent, nkIntLit, nkStrLit, nkCharLit, nkBoolLit, nkCall, nkField,
+        nkUnary, nkBinary, nkTry, nkTryBlock, nkCatch, nkAwait, nkSpawn,
+        nkDeref}
+
+proc analTryBlock(s: Sema; n: AstNode): Type =
+  if s.procSym.isNil or s.procSym.typ.ret.kind != tyResult:
+    fail("E-TRY-NO-RESULT", s.curMod.file, n.line, n.col,
+         "try: требует, чтобы процедура возвращала !T")
+  let body = n.tryBody
+  s.push()
+  inc s.autoTryDepth
+  var lastType = s.builtins["void"]
+  if body.kind == nkBlock:
+    for i, st in body.stmts:
+      let last = i == body.stmts.len - 1
+      if last and isValueExprKind(st.kind):
+        lastType = s.analExpr(st)
+      else:
+        s.analStmt(st)
+        if last:
+          lastType = s.builtins["void"]
+  dec s.autoTryDepth
+  s.pop()
+  n.typ = lastType
+  result = lastType
+
+proc isPanicCall(s: Sema; n: AstNode): bool =
+  n.kind == nkCall and n.symId >= 0 and n.symId < s.prog.syms.len and
+    s.prog.syms[n.symId].builtin == "panic"
+
+proc analCatch(s: Sema; n: AstNode): Type =
+  inc s.preserveResult
+  let t = s.analExpr(n.catchOperand)
+  dec s.preserveResult
+  if t.kind != tyResult:
+    fail("E-TYPE", s.curMod.file, n.catchOperand.line, n.catchOperand.col,
+         "catch применяется только к !T, получен " & typeName(t))
+  let elem = t.elem
+  var seen: seq[int32]
+  var hasElse = false
+  for i, arm in n.catchArms:
+    if arm.isElse:
+      if i != n.catchArms.len - 1:
+        fail("E-CATCH-ELSE", s.curMod.file, arm.line, arm.col,
+             "else должен быть последней веткой catch")
+      hasElse = true
+    else:
+      let code = errorCodeFor(arm.patternName)
+      if code < 0:
+        fail("E-ERROR-CODE", s.curMod.file, arm.line, arm.col,
+             "неизвестный код ошибки: error." & arm.patternName)
+      if code in seen:
+        fail("E-DUP-CATCH", s.curMod.file, arm.line, arm.col,
+             "повторный паттерн error." & arm.patternName)
+      seen.add code
+      arm.errorCode = code
+    let act = arm.action
+    if act.kind == nkPropagate:
+      if s.procSym.isNil or s.procSym.typ.ret.kind != tyResult:
+        fail("E-CATCH-PROPAGATE", s.curMod.file, act.line, act.col,
+             "else => propagate допустим только в функции, возвращающей !T")
+      act.typ = s.builtins["void"]
+      act.diverges = true
+    elif act.kind in {nkBreak, nkContinue}:
+      s.analStmt(act)
+      act.diverges = true
+    else:
+      let at = s.analExpr(act)
+      if isPanicCall(s, act):
+        act.diverges = true
+      elif elem.kind == tyVoid:
+        if at.kind != tyVoid:
+          fail("E-TYPE", s.curMod.file, act.line, act.col,
+               "ветка catch для !void должна давать void")
+      else:
+        if not sameType(at, elem):
+          fail("E-TYPE", s.curMod.file, act.line, act.col,
+               "ветка catch даёт " & typeName(at) & ", ожидался " &
+               typeName(elem))
+  if not hasElse and (s.procSym.isNil or
+                      s.procSym.typ.ret.kind != tyResult):
+    fail("E-CATCH-COVERAGE", s.curMod.file, n.line, n.col,
+         "catch без else в функции без !T не покрывает все ошибки",
+         "добавьте else => panic(...) или верните !T")
+  n.typ = elem
+  result = elem
+
 proc analyzeProcBody(s: Sema; sym: Symbol) =
   let m = s.findModule(sym.modulePath)
   if m == nil:
@@ -1221,9 +1400,17 @@ proc analyzeProcBody(s: Sema; sym: Symbol) =
   s.inDefer = 0
   s.loopDepth = 0
   s.controlDepth = 0
+  s.autoTryDepth = 0
+  s.preserveResult = 0
   let oldDepth = s.monoDepth
   s.monoDepth = sym.monoDepth
+  if sym.propagate:
+    if sym.typ.ret.kind != tyResult:
+      fail("E-PROPAGATE-RET", m.file, sym.node.line, sym.node.col,
+           "{.propagate.} требует процедуру, возвращающую !T")
+    s.autoTryDepth = 1
   s.analStmt(sym.node.body)
+  s.autoTryDepth = 0
   s.monoDepth = oldDepth
 
 proc analyzeModuleBodies(s: Sema; m: ModuleInfo) =
@@ -1305,6 +1492,15 @@ proc analyze*(modules: seq[ModuleInfo]; opts: BuildOptions): Program =
                          builtin: "assert")
   s.builtinAssert = assertSym
   discard s.addSym(assertSym)
+
+  let panicType = newType(tyProc)
+  panicType.params = @[s.builtins["string"]]
+  panicType.ret = s.builtins["void"]
+  let panicSym = Symbol(kind: skBuiltin, name: "panic",
+                        cname: "cvn_panic", typ: panicType,
+                        builtin: "panic")
+  s.builtinPanic = panicSym
+  discard s.addSym(panicSym)
 
   for nm in ["sizeof", "alignof", "offsetof"]:
     let ty = newType(tyProc)

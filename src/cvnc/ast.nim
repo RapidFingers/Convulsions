@@ -10,7 +10,8 @@ type
     nkIdent, nkIntLit, nkStrLit, nkCharLit, nkUnary, nkBinary, nkTry,
     nkTypeName, nkPtrType, nkResultType, nkFieldDecl, nkNamedField, nkAssign,
     nkDeref, nkTypeApply, nkSpawn, nkAwait, nkBoolLit, nkIf, nkWhile,
-    nkBreak, nkContinue
+    nkBreak, nkContinue, nkTryBlock, nkCatch, nkCatchArm, nkErrdefer,
+    nkPropagate
 
   AstNode* = ref object
     line*: int
@@ -20,6 +21,10 @@ type
     convTo*: Type
     typeRef*: Type
     genericParams*: seq[string]
+    autoTry*: bool
+    autoResultType*: Type
+    errorCode*: int32
+    diverges*: bool
     case kind*: NodeKind
     of nkIdent:
       name*: string
@@ -111,6 +116,19 @@ type
       whileBody*: AstNode
     of nkBreak, nkContinue:
       discard
+    of nkTryBlock:
+      tryBody*: AstNode
+    of nkCatch:
+      catchOperand*: AstNode
+      catchArms*: seq[AstNode]
+    of nkCatchArm:
+      patternName*: string
+      isElse*: bool
+      action*: AstNode
+    of nkErrdefer:
+      edBody*: AstNode
+    of nkPropagate:
+      discard
 
 proc newNode*(kind: NodeKind; line, col: int): AstNode =
   AstNode(kind: kind, line: line, col: col)
@@ -198,6 +216,19 @@ proc dumpAst*(n: AstNode; indent = 0): string =
   of nkWhile:
     result.add dumpAst(n.whileCond, indent + 1)
     result.add dumpAst(n.whileBody, indent + 1)
+  of nkTryBlock:
+    result.add dumpAst(n.tryBody, indent + 1)
+  of nkCatch:
+    result.add dumpAst(n.catchOperand, indent + 1)
+    for a in n.catchArms:
+      result.add dumpAst(a, indent + 1)
+  of nkCatchArm:
+    result.add " " & (if n.isElse: "else" else: n.patternName)
+    result.add dumpAst(n.action, indent + 1)
+  of nkErrdefer:
+    result.add dumpAst(n.edBody, indent + 1)
+  of nkPropagate:
+    discard
   of nkTypeApply:
     for a in n.appliedArgs:
       result.add dumpAst(a, indent + 1)
@@ -209,6 +240,10 @@ proc cloneAst*(n: AstNode): AstNode =
   result = newNode(n.kind, n.line, n.col)
   result.symId = -1
   result.genericParams = n.genericParams
+  result.autoTry = n.autoTry
+  result.autoResultType = n.autoResultType
+  result.errorCode = n.errorCode
+  result.diverges = n.diverges
   case n.kind
   of nkIdent: result.name = n.name
   of nkTypeName: result.typeName = n.typeName
@@ -304,4 +339,18 @@ proc cloneAst*(n: AstNode): AstNode =
     result.whileCond = cloneAst(n.whileCond)
     result.whileBody = cloneAst(n.whileBody)
   of nkBreak, nkContinue:
+    discard
+  of nkTryBlock:
+    result.tryBody = cloneAst(n.tryBody)
+  of nkCatch:
+    result.catchOperand = cloneAst(n.catchOperand)
+    for a in n.catchArms:
+      result.catchArms.add cloneAst(a)
+  of nkCatchArm:
+    result.patternName = n.patternName
+    result.isElse = n.isElse
+    result.action = cloneAst(n.action)
+  of nkErrdefer:
+    result.edBody = cloneAst(n.edBody)
+  of nkPropagate:
     discard

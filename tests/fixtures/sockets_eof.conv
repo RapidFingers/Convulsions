@@ -9,6 +9,7 @@ proc serve(l: Socket): !void =
   let c = try l.accept()
   defer: c.close()
   try write(c, "bye")
+  shutdownWrite(c)
 
 proc main(): !void =
   let l = try listen("127.0.0.1", 0)
@@ -20,7 +21,9 @@ proc main(): !void =
   let got = try read(s, a, 64)
   defer: got.deinit()
   assert(equal(got, "bye"))
-  let eof = try read(s, a, 64)
+  let eof = read(s, a, 64) catch:
+    error.Closed => ""
+    else => propagate
   defer: eof.deinit()
   assert(eof.len == 0)
   try await srv

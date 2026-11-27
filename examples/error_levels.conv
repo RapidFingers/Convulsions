@@ -1,0 +1,26 @@
+{.profile: kernel.}
+import core/string
+import core/io
+
+proc readInt(): !int =
+  let q = try rune(65)
+  return int(q)
+
+proc a(): !int {.propagate.} =
+  return readInt()
+
+proc b(): !int =
+  let x = try:
+    let y = readInt()
+    y + 1
+  return x
+
+proc c(): !int =
+  let x = try readInt()
+  return x
+
+proc main(): !void {.propagate.} =
+  assert(a() == 65)
+  assert(b() == 66)
+  assert(c() == 65)
+  println("error-levels-ok")

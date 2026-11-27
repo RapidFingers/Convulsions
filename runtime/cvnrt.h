@@ -29,6 +29,8 @@ enum {
   CVN_ERR_EOF        = 7,
   CVN_ERR_CANCELLED  = 8,
   CVN_ERR_TASK       = 9,
+  CVN_ERR_CLOSED     = 10,
+  CVN_ERR_WOULD_BLOCK = 11,
   CVN_ERR_CUSTOM     = 0x1000
 };
 
@@ -181,6 +183,7 @@ cvn_result_string cvn_str_from_rune(cvn_allocator a, uint32_t r);
 void              cvn_rt_init(void);
 void              cvn_rt_report_error(cvn_error e);
 void              cvn_rt_assert_fail(const char *where, const char *msg);
+void              cvn_panic(cvn_string msg);
 const char       *cvn_error_message(int32_t code);
 
 #ifdef __cplusplus

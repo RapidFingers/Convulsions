@@ -298,6 +298,15 @@ void cvn_rt_assert_fail(const char *where, const char *msg) {
   exit(2);
 }
 
+void cvn_panic(cvn_string msg) {
+  fprintf(stderr, "panic: ");
+  if (msg.ptr != NULL && msg.len > 0)
+    fwrite(msg.ptr, 1, (size_t)msg.len, stderr);
+  fputc('\n', stderr);
+  fflush(stderr);
+  exit(2);
+}
+
 cvn_error cvn_io_println(cvn_string s) {
   if (s.len < 0)
     return make_error(CVN_ERR_INVALID, 0);
@@ -332,6 +341,8 @@ const char *cvn_error_message(int32_t code) {
     case CVN_ERR_EOF: return "end of file";
     case CVN_ERR_CANCELLED: return "cancelled";
     case CVN_ERR_TASK: return "task failed";
+    case CVN_ERR_CLOSED: return "closed";
+    case CVN_ERR_WOULD_BLOCK: return "would block";
     default: return "error";
   }
 }

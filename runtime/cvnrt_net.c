@@ -117,12 +117,12 @@ static void close_fd(cvn_fd_t fd) {
 #endif
 }
 
-static int wait_fd(cvn_fd_t fd, uint32_t events) {
-  int r = cvn_task_wait_fd((int)fd, events);
-  /* ERR/HUP может прийти вместе с данными; пусть syscall решит. */
-  if (r == 0)
-    return -1;
-  return 0;
+static int wait_fd_events(cvn_fd_t fd, uint32_t events) {
+  return cvn_task_wait_fd((int)fd, events);
+}
+
+static void wait_fd(cvn_fd_t fd, uint32_t events) {
+  (void)wait_fd_events(fd, events);
 }
 
 static bool valid_socket(cvn_socket s, int kind) {
@@ -180,8 +180,7 @@ cvn_result_obj_cvn_socket cvn_net_accept(cvn_socket s) {
 #else
     if (errno == EAGAIN || errno == EWOULDBLOCK) {
 #endif
-      if (wait_fd((cvn_fd_t)s.fd, CVN_IO_READ) != 0)
-        return sock_err(CVN_ERR_IO);
+      wait_fd((cvn_fd_t)s.fd, CVN_IO_READ);
       continue;
     }
     return sock_err(CVN_ERR_IO);
@@ -216,17 +215,19 @@ cvn_result_obj_cvn_socket cvn_net_connect(cvn_string host, int64_t port) {
       close_fd(fd);
       return sock_err(CVN_ERR_IO);
     }
-    if (wait_fd(fd, CVN_IO_WRITE) != 0) {
-      close_fd(fd);
-      return sock_err(CVN_ERR_IO);
-    }
     {
-      int soerr = 0;
-      socklen_t slen = (socklen_t)sizeof soerr;
-      if (getsockopt(fd, SOL_SOCKET, SO_ERROR, (char *)&soerr, &slen) != 0 ||
-          soerr != 0) {
-        close_fd(fd);
-        return sock_err(CVN_ERR_IO);
+      for (;;) {
+        int r = wait_fd_events(fd, CVN_IO_WRITE);
+        int soerr = 0;
+        socklen_t slen = (socklen_t)sizeof soerr;
+        if (r == 0)
+          continue;
+        if (getsockopt(fd, SOL_SOCKET, SO_ERROR, (char *)&soerr, &slen) != 0 ||
+            soerr != 0) {
+          close_fd(fd);
+          return sock_err(CVN_ERR_IO);
+        }
+        break;
       }
     }
   }
@@ -255,8 +256,7 @@ static int64_t read_into_raw(cvn_socket s, char *buf, int64_t max_bytes) {
 #else
     if (errno == EAGAIN || errno == EWOULDBLOCK) {
 #endif
-      if (wait_fd((cvn_fd_t)s.fd, CVN_IO_READ) != 0)
-        return -1;
+      wait_fd((cvn_fd_t)s.fd, CVN_IO_READ);
       continue;
     }
     return -1;
@@ -271,6 +271,8 @@ cvn_result_i64 cvn_net_read_into(cvn_socket s, void *buf,
   n = read_into_raw(s, (char *)buf, max_bytes);
   if (n < 0)
     return i64_err(CVN_ERR_IO);
+  if (n == 0)
+    return i64_err(CVN_ERR_CLOSED);
   return i64_ok(n);
 }
 
@@ -293,7 +295,7 @@ cvn_result_string cvn_net_read(cvn_socket s, cvn_allocator a,
   }
   if (n == 0) {
     cvn_free_bytes(a, buf, max_bytes + 1);
-    return str_ok(cvn_str_empty);
+    return str_err(CVN_ERR_CLOSED);
   }
   buf[n] = '\0';
   out.ptr = buf;
@@ -323,8 +325,7 @@ static cvn_error write_bytes_raw(cvn_socket s, const char *buf, int64_t n) {
 #else
       if (errno == EAGAIN || errno == EWOULDBLOCK) {
 #endif
-        if (wait_fd((cvn_fd_t)s.fd, CVN_IO_WRITE) != 0)
-          return net_err(CVN_ERR_IO);
+        wait_fd((cvn_fd_t)s.fd, CVN_IO_WRITE);
         continue;
       }
       return net_err(CVN_ERR_IO);
@@ -346,6 +347,16 @@ void cvn_net_close(cvn_socket s) {
     close_fd((cvn_fd_t)s.fd);
 }
 
+void cvn_net_shutdown_write(cvn_socket s) {
+  if (!valid_socket(s, CVN_SOCK_CONN))
+    return;
+#ifdef _WIN32
+  shutdown((cvn_fd_t)s.fd, SD_SEND);
+#else
+  shutdown((cvn_fd_t)s.fd, SHUT_WR);
+#endif
+}
+
 int64_t cvn_net_local_port(cvn_socket s) {
   struct sockaddr_in addr;
   socklen_t len = (socklen_t)sizeof addr;
@@ -356,3 +367,4 @@ int64_t cvn_net_local_port(cvn_socket s) {
     return -1;
   return (int64_t)ntohs(addr.sin_port);
 }
+

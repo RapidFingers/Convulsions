@@ -284,7 +284,7 @@ proc scanOperator(l: var Lexer) =
   if l.i + 1 < l.src.len:
     let two = l.src[l.i .. l.i + 1]
     if two in ["==", "!=", "<=", ">=", "+=", "-=", "*=", "/=", "%=", "&=",
-               "|=", "^=", "<<", ">>", "..", "->"]:
+               "|=", "^=", "<<", ">>", "..", "->", "=>"]:
       l.addTokAt(tkOperator, two, sl, sc)
       l.bumpN(2)
       return

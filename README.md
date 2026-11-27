@@ -285,7 +285,7 @@ $ ./build/server-fiber --listen :7777
 | `core/string` | `concat`, `dupe`, `find`, `split`, `runeAt`, `runeOffset`, `runeLen`, `runes`, `validate`, `rune`, `fromRune`, `equal` | есть в 0.9.0 |
 | `core/error` | `ErrorCode`, `error`, `errorMessage`, `errorString` | есть в 0.9.0 |
 | `core/io` | `Fd`, `readFull`, `writeAll`, `println`, `listen`, `accept`, `close` | 0.9.0 (IOCP/epoll — M4) |
-| `core/net` | `Socket`, `listen`, `accept`, `connect`, `read`, `readInto`, `write`, `writeBytes`, `close`, `localPort` | v0.10, TCP IPv4 поверх fiber |
+| `core/net` | `Socket`, `listen`, `accept`, `connect`, `read`, `readInto`, `write`, `writeBytes`, `close`, `shutdownWrite`, `localPort` | v0.10, TCP IPv4 поверх fiber (EOF→Closed в v0.11) |
 | `core/concurrency` | `sleep`, `Task`, `Executor`-реализации, `Channel`, `Mutex`, `Select`, `parallel`, `withScope`, `spawnBlocking` | 0.9.0, кроме `Select` (v0.7) |
 | `core/handle` | `GcHandle` (тип без GC-кода), упаковка `index << 32 \| gen` | v0.8 |
 | `core/gc` | `gcAllocator`, `gcHandle`, `gcRelease`, `gcDeref`, `gcAttachThread`, `gcDetachThread`, `foreignToException` | v0.8 |
@@ -1097,12 +1097,19 @@ C-библиотеки; OS-поток — наоборот. Если бы фиб
 одном воркере после старта. Публичные сокеты — следующий милстоун поверх
 `cvn_task_wait_fd`.
 
-Реализация v0.10: `if/elif/else`, `while`, `break/continue`, `true/false`;
-`core/net` даёт TCP IPv4 `Socket` (`listen/accept/connect/read/readInto/write/
-writeBytes/close/localPort`). Сокеты nonblocking и паркуют фибру в event loop;
-сервер делает `spawn handle(conn)` и обрабатывает клиентов параллельно.
-Ограничения: нет DNS/IPv6/UDP/TLS, одна незавершённая операция на сокет,
-`close` во время ожидания не поддержан, `defer` внутри `if`/`while` запрещён.
+Реализация v0.11: `try:`-блок (значение — последнее выражение, auto-try внутри),
+`{.propagate.}` на процедуре, частичный `catch:` с `error.<Code>`/`else`,
+`errdefer:`, `panic("...")`. Propagating context — `try:`/`{.propagate.}`;
+непокрытый `catch` в `!T`-функции уходит наверх, в `void`-функции обязателен
+`else => panic(...)`. `error.*` — compile-time `ErrorCode`; добавлены
+`Closed`/`WouldBlock`. Сокеты: EOF теперь `error.Closed`, `read`/`readInto`
+не возвращают пустую строку/0; добавлен `shutdownWrite`. Коды принимаются в
+написании `error.Closed` и в спецификационном `error.closed`.
+
+Спецификационная форма `catch e:` из §5.2 в MVP v0.11 ещё не реализована:
+используется `catch:` со списком `error.<Code> => action` / `else => ...`.
+`defer`/`errdefer` остаются function-level (block-scope cleanup — позже).
+
 Спецификационные имена `core/io` (`listen`/`accept`) в MVP живут в `core/net`.
 
 ### 4.1 Что именно является языком, а что библиотекой
@@ -2785,7 +2792,13 @@ _start → cvn_rt_init()
 | `E-SPAWN-RET` | процедура в `spawn` не возвращает `!T` |
 | `E-SPAWN-VAR` | `spawn` процедуры с `var`-параметром |
 | `E-LOOP-CONTROL` | `break`/`continue` вне `while` |
-| `E-DEFER-CONTROL` | `defer` внутри `if`/`while` |
+| `E-DEFER-CONTROL` | `defer`/`errdefer` внутри `if`/`while` |
+| `E-PROPAGATE-RET` | `{.propagate.}` у процедуры без `!T` |
+| `E-CATCH-COVERAGE` | `catch:` без `else` в функции без `!T` |
+| `E-CATCH-PROPAGATE` | `else => propagate` в функции без `!T` |
+| `E-CATCH-ELSE` | `else` не последним в `catch:` |
+| `E-DUP-CATCH` | повторный `error.<Code>` в `catch:` |
+| `E-ERROR-CODE` | неизвестный `error.<Code>` |
 | `E-LEX-*` | `E-LEX-CHAR`, `E-LEX-STRING`, `E-LEX-NUMBER`, `E-LEX-ESCAPE`, `E-LEX-COMMENT` |
 | `E-LEX-UTF8` | исходник не является валидным UTF-8 |
 | `E-PRAGMA-UNSUPPORTED` | прагма не реализована в этой версии |

@@ -4,13 +4,17 @@ import std/tables
 import diag, ast, types, symbols, sema, hir
 
 type
+  Cleanup = object
+    instrs: seq[HirInstr]
+    onError: bool
+
   Lower = ref object
     prog: Program
     procSym: Symbol
     slots: seq[Type]
     symSlots: Table[int, int]
     instrs: seq[HirInstr]
-    cleanups: seq[seq[seq[HirInstr]]]
+    cleanups: seq[seq[Cleanup]]
     labelSeq: int
     curFile: string
     spawnSeq: int
@@ -28,11 +32,14 @@ proc newLabel(l: Lower): int =
   result = l.labelSeq
   inc l.labelSeq
 
-proc emitCleanups(l: Lower) =
+proc emitCleanups(l: Lower; onError: bool) =
   for i in countdown(l.cleanups.len - 1, 0):
     # LIFO по блокам defer, но инструкции внутри блока — в исходном порядке
     for k in countdown(l.cleanups[i].len - 1, 0):
-      for ins in l.cleanups[i][k]:
+      let c = l.cleanups[i][k]
+      if c.onError and not onError:
+        continue
+      for ins in c.instrs:
         l.instrs.add ins
 
 proc internString(l: Lower; s: string): int =
@@ -48,6 +55,8 @@ proc withLabel(ins: HirInstr; label: int): HirInstr =
 
 proc lowerExpr(l: Lower; n: AstNode): int
 proc lowerStmt(l: Lower; n: AstNode)
+proc lowerCatchAction(l: Lower; action: AstNode; src: int; dst: int;
+                      endL: int)
 proc lowerPath(l: Lower; n: AstNode): tuple[slot: int, rootPtr: bool,
                                             path: seq[string]]
 
@@ -74,7 +83,37 @@ proc lowerPath(l: Lower; n: AstNode): tuple[slot: int, rootPtr: bool,
     fail("E-INTERNAL", l.prog.entry.file, n.line, n.col,
          "выражение не является lvalue: " & $n.kind)
 
-proc lowerExpr(l: Lower; n: AstNode): int =
+proc isValueExprKind(k: NodeKind): bool =
+  k in {nkIdent, nkIntLit, nkStrLit, nkCharLit, nkBoolLit, nkCall, nkField,
+        nkUnary, nkBinary, nkTry, nkTryBlock, nkCatch, nkAwait, nkSpawn,
+        nkDeref}
+
+proc lowerTrySlot(l: Lower; src: int; okType: Type): int =
+  let errL = l.newLabel()
+  let contL = l.newLabel()
+  var chk = newInstr(hiCheckResult)
+  chk.a = src
+  chk.label = errL
+  l.emit(chk)
+  var dst = -1
+  if okType.kind != tyVoid:
+    dst = l.newSlot(okType)
+    var ext = newInstr(hiExtractOk)
+    ext.dst = dst
+    ext.a = src
+    l.emit(ext)
+  var j = newInstr(hiJmp)
+  j.label = contL
+  l.emit(j)
+  l.emit(newInstr(hiLabel).withLabel(errL))
+  l.emitCleanups(true)
+  var re = newInstr(hiRetErrFrom)
+  re.a = src
+  l.emit(re)
+  l.emit(newInstr(hiLabel).withLabel(contL))
+  result = dst
+
+proc lowerExprRaw(l: Lower; n: AstNode): int =
   case n.kind
   of nkIntLit:
     result = l.newSlot(n.typ)
@@ -302,10 +341,24 @@ proc lowerExpr(l: Lower; n: AstNode): int =
     ins.args = argSlots
     l.emit(ins)
     result = dst
-  of nkTry:
-    let src = l.lowerExpr(n.operand)
+  of nkTryBlock:
+    let body = n.tryBody
+    if n.typ.kind == tyVoid:
+      for st in body.stmts:
+        l.lowerStmt(st)
+      result = -1
+    else:
+      var last = -1
+      for i, st in body.stmts:
+        if i == body.stmts.len - 1 and isValueExprKind(st.kind):
+          last = l.lowerExpr(st)
+        else:
+          l.lowerStmt(st)
+      result = last
+  of nkCatch:
+    let src = l.lowerExpr(n.catchOperand)
     let errL = l.newLabel()
-    let contL = l.newLabel()
+    let endL = l.newLabel()
     var chk = newInstr(hiCheckResult)
     chk.a = src
     chk.label = errL
@@ -318,23 +371,69 @@ proc lowerExpr(l: Lower; n: AstNode): int =
       ext.a = src
       l.emit(ext)
     var j = newInstr(hiJmp)
-    j.label = contL
+    j.label = endL
     l.emit(j)
     l.emit(newInstr(hiLabel).withLabel(errL))
-    l.emitCleanups()
-    var re = newInstr(hiRetErrFrom)
-    re.a = src
-    l.emit(re)
-    l.emit(newInstr(hiLabel).withLabel(contL))
+    let intTy = newType(tyInt, "int")
+    let cs = l.newSlot(intTy)
+    var ge = newInstr(hiResultErrCode)
+    ge.dst = cs
+    ge.a = src
+    ge.typeRef = n.catchOperand.typ
+    l.emit(ge)
+    var hasElse = false
+    for arm in n.catchArms:
+      if arm.isElse:
+        hasElse = true
+        l.lowerCatchAction(arm.action, src, dst, endL)
+      else:
+        let nextL = l.newLabel()
+        let code = l.newSlot(intTy)
+        var ci = newInstr(hiConstInt)
+        ci.dst = code
+        ci.imm = int64(arm.errorCode)
+        l.emit(ci)
+        let cmp = l.newSlot(newType(tyBool, "bool"))
+        var be = newInstr(hiBinary)
+        be.dst = cmp
+        be.text = "=="
+        be.a = cs
+        be.b = code
+        l.emit(be)
+        var jf = newInstr(hiJmpIfFalse)
+        jf.a = cmp
+        jf.label = nextL
+        l.emit(jf)
+        l.lowerCatchAction(arm.action, src, dst, endL)
+        l.emit(newInstr(hiLabel).withLabel(nextL))
+    if not hasElse:
+      l.emitCleanups(true)
+      var re = newInstr(hiRetErrFrom)
+      re.a = src
+      l.emit(re)
+    l.emit(newInstr(hiLabel).withLabel(endL))
     result = dst
+  of nkTry:
+    let src = l.lowerExpr(n.operand)
+    result = l.lowerTrySlot(src, n.typ)
   else:
     fail("E-INTERNAL", l.prog.entry.file, n.line, n.col,
          "выражение не понижено: " & $n.kind)
 
+proc lowerExpr(l: Lower; n: AstNode): int =
+  if n.autoTry:
+    let okType = n.typ
+    n.typ = n.autoResultType
+    result = l.lowerExprRaw(n)
+    n.typ = okType
+    result = l.lowerTrySlot(result, okType)
+  else:
+    result = l.lowerExprRaw(n)
+
 proc capture(l: Lower; body: AstNode): seq[HirInstr] =
   let saved = l.instrs
   l.instrs = @[]
-  var empty: seq[seq[HirInstr]] = @[]
+  var empty: seq[Cleanup] = @[]
   l.cleanups.add empty
   l.lowerStmt(body)
   l.cleanups.setLen(l.cleanups.len - 1)
@@ -404,20 +503,47 @@ proc lowerStmt(l: Lower; n: AstNode) =
     l.emit(j)
   of nkDefer:
     let bodyInstrs = l.capture(n.deferBody)
-    l.cleanups[^1].add bodyInstrs
+    l.cleanups[^1].add Cleanup(instrs: bodyInstrs, onError: false)
+  of nkErrdefer:
+    let bodyInstrs = l.capture(n.edBody)
+    l.cleanups[^1].add Cleanup(instrs: bodyInstrs, onError: true)
   of nkReturn:
-    l.emitCleanups()
+    let ret = l.procSym.typ.ret
     if n.value != nil:
       let v = l.lowerExpr(n.value)
-      if l.procSym.typ.ret.kind == tyResult:
-        var ins = newInstr(hiRetVal)
-        ins.a = v
-        l.emit(ins)
+      if ret.kind == tyResult and n.value.typ != nil and
+         n.value.typ.kind == tyResult:
+        let errL = l.newLabel()
+        let endL = l.newLabel()
+        var chk = newInstr(hiCheckResult)
+        chk.a = v
+        chk.label = errL
+        l.emit(chk)
+        l.emitCleanups(false)
+        var rv = newInstr(hiRet)
+        rv.a = v
+        l.emit(rv)
+        var j = newInstr(hiJmp)
+        j.label = endL
+        l.emit(j)
+        l.emit(newInstr(hiLabel).withLabel(errL))
+        l.emitCleanups(true)
+        var re = newInstr(hiRetErrFrom)
+        re.a = v
+        l.emit(re)
+        l.emit(newInstr(hiLabel).withLabel(endL))
       else:
-        var ins = newInstr(hiRet)
-        ins.a = v
-        l.emit(ins)
+        l.emitCleanups(false)
+        if ret.kind == tyResult:
+          var rv = newInstr(hiRetVal)
+          rv.a = v
+          l.emit(rv)
+        else:
+          var rv = newInstr(hiRet)
+          rv.a = v
+          l.emit(rv)
     else:
+      l.emitCleanups(false)
       l.emit(newInstr(hiRet))
   of nkDiscard:
     discard l.lowerExpr(n.value)
@@ -457,6 +583,28 @@ proc lowerStmt(l: Lower; n: AstNode) =
   else:
     discard l.lowerExpr(n)
 
+proc lowerCatchAction(l: Lower; action: AstNode; src: int; dst: int;
+                      endL: int) =
+  case action.kind
+  of nkPropagate:
+    l.emitCleanups(true)
+    var re = newInstr(hiRetErrFrom)
+    re.a = src
+    l.emit(re)
+  of nkBreak, nkContinue:
+    l.lowerStmt(action)
+  else:
+    let v = l.lowerExpr(action)
+    if not action.diverges:
+      if dst >= 0 and v >= 0:
+        var mv = newInstr(hiMov)
+        mv.dst = dst
+        mv.a = v
+        l.emit(mv)
+      var j = newInstr(hiJmp)
+      j.label = endL
+      l.emit(j)
+
 proc lowerProc(l: Lower; sym: Symbol): HirProc =
   l.procSym = sym
   l.curFile = sym.modulePath
@@ -466,7 +614,7 @@ proc lowerProc(l: Lower; sym: Symbol): HirProc =
   l.slots = @[]
   l.symSlots = initTable[int, int]()
   l.instrs = @[]
-  var empty: seq[seq[HirInstr]] = @[]
+  var empty: seq[Cleanup] = @[]
   l.cleanups = @[empty]
   l.labelSeq = 0
   l.breakLabels = @[]
@@ -479,7 +627,7 @@ proc lowerProc(l: Lower; sym: Symbol): HirProc =
     l.symSlots[ps.id] = slot
 
   l.lowerStmt(sym.node.body)
-  l.emitCleanups()
+  l.emitCleanups(false)
   l.emit(newInstr(hiRet))
 
   result.symId = sym.id

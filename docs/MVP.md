@@ -1,11 +1,12 @@
-# Convulsions MVP (v0.10): kernel, UTF-8, объекты, аллокаторы, generics, fibers, sockets
+# Convulsions MVP (v0.11): kernel, UTF-8, объекты, аллокаторы, generics, fibers, sockets, ошибки
 
 Минимальный компилятор языка Convulsions: профиль `kernel`, бэкенд `native`
 (HIR → C11 → gcc). Реализует hello world, UTF-8-модель `string` (README §6.7),
 value-объекты и их аллокацию в куче (§6.2, §3.6), аллокаторы (§3.2–3.8),
 отчёт об утечках с типом и `file:line`, мономорфизируемые дженерики (§6.3),
-`spawn`/`await` под исполнителем `fiber` с пулом воркеров и event loop (§4)
-и TCP-сокеты поверх фибр.
+`spawn`/`await` под исполнителем `fiber` с пулом воркеров и event loop (§4),
+TCP-сокеты поверх фибр и уровни обработки ошибок `try:`/`{.propagate.}`/
+частичный `catch:`/`errdefer`.
 Спецификация языка — [../README.md](../README.md).
 
 ## Сборка и запуск
@@ -24,6 +25,8 @@ $ bin/cvn run examples/leak_debug.conv
 leak-debug ok
 $ bin/cvn run examples/generics.conv
 generics ok
+$ bin/cvn run examples/error_levels.conv
+error-levels-ok
 $ bin/cvn run examples/fibers.conv
 fibers ok
 $ bin/cvn build examples/fibers.conv --workers=1 -o build/fibers1
@@ -50,7 +53,8 @@ hello
 | Дженерики | `[T]` у типов/процедур, `Box[int]`, вывод и явная конкретизация, вложенность, `create(Box[int])` |
 | Fibers | `spawn f(args)`, `await t`, `sleep(ms)`, пул воркеров, event loop, `--workers`, `--stack-size` |
 | Control flow | `if/elif/else`, `while`, `break`, `continue`, `true/false` |
-| Сокеты | `core/net`: `Socket`, `listen/accept/connect/read/readInto/write/writeBytes/close/localPort`, TCP IPv4 |
+| Ошибки | `try expr`, `try:`-блок, `{.propagate.}`, частичный `catch:` с `error.<Code>`, `errdefer:`, `panic` |
+| Сокеты | `core/net`: `Socket`, `listen/accept/connect/read/readInto/write/writeBytes/close/shutdownWrite/localPort`, TCP IPv4 |
 | Аллокаторы | `null/c/page/fixed/arena/stack/task`, `initDebug`, байтовые `alloc/free/realloc`, `memFill/memByte/...` |
 | Выражения | имена, вызовы, UFCS, `try`, `-`, `not`, арифметика, сравнения скаляров, `s.len`, `sizeof/alignof/offsetof`, `T(x)` |
 | Операторы | `let`, `var`, `return`, `discard`, `defer:`, `try`, `assert(cond[, "msg"])`, присваивание `lhs = expr` |
@@ -63,7 +67,8 @@ hello
 `import`.
 
 Не поддерживается (ошибка `E-UNSUPPORTED` с версией): `for`,
-`catch:`/`errdefer`, `seq`, `union`/`enum`/`distinct`, `class`/`interface`,
+`catch e:`-форма из спецификации, исключения/`throw`, `seq`,
+`union`/`enum`/`distinct`, `class`/`interface`,
 `runes`, срезы строк, `addr`/`p[i]`, `nil`, `alloc[T]` для массивов,
 constraints/`static`-параметры, UDP/IPv6/DNS/TLS, `{.packed.}`/`{.align.}`,
 сравнение объектов и строк, `user`-профиль, VM.
@@ -269,16 +274,16 @@ TCP IPv4 поверх `fiber`: все ожидания (`accept`, `connect`, `re
 
 ```conv
 # сервер
-proc handle(c: Socket): !void =
+proc handle(c: Socket): !void {.propagate.} =
   defer: c.close()
   let a = taskAllocator()
-  let buf = try allocBytes(a, 4096)
+  let buf = allocBytes(a, 4096)
   defer: freeBytes(a, buf, 4096)
   while true:
-    let n = try readInto(c, buf, 4096)
-    if n == 0:
-      break
-    try writeBytes(c, buf, n)
+    let n = readInto(c, buf, 4096) catch:
+      error.Closed => break
+      error.WouldBlock => continue
+    writeBytes(c, buf, n)
 
 let l = try listen("0.0.0.0", 7700)
 while true:
@@ -295,11 +300,64 @@ defer: got.deinit()
 ```
 
 API: `listen(host, port)`, `accept`, `connect`, `read(s,a,max)`, `readInto`,
-`write`, `writeBytes`, `close`, `localPort`; `core/string.equal` сравнивает
-содержимое. IPv4 numeric и `localhost`; DNS/IPv6/UDP/TLS нет. `read` аллоцирует
-строку (нужен `deinit`), `readInto` пишет в буфер. Одна незавершённая операция
-на сокет; `close` во время ожидания не поддержан. В `if`/`while` нельзя
-`defer` (`E-DEFER-CONTROL`); в сервере defer — на уровне `handle`.
+`write`, `writeBytes`, `close`, `shutdownWrite`, `localPort`;
+`core/string.equal` сравнивает содержимое. IPv4 numeric и `localhost`;
+DNS/IPv6/UDP/TLS нет. `read` аллоцирует строку (нужен `deinit`), `readInto`
+пишет в буфер. EOF/закрытие — `error.Closed`, а не `0`/пустая строка.
+Одна незавершённая операция на сокет; `close` во время ожидания не поддержан.
+В `if`/`while` нельзя `defer` (`E-DEFER-CONTROL`); в сервере defer — на
+уровне `handle`.
+
+## Ошибки: `try:`, `{.propagate.}`, `catch:`, `errdefer`
+
+Три уровня разворачивания `!T`:
+
+```conv
+# один вызов
+let x = try call()
+
+# регион-выражение: все !T внутри разворачиваются
+let cfg = try:
+  let raw = readFile(a, path)
+  parseConfig(a, raw)
+
+# вся функция
+proc main(): !void {.propagate.} =
+  let l = listen("0.0.0.0", 7700)
+  while true:
+    let c = l.accept()
+    discard spawn handle(c)
+```
+
+В propagating-контексте (`try:`/`{.propagate.}`) auto-try применяется к
+выражению `!T` в позиции значения: инициализатор, RHS, аргумент, условие,
+результат блока. Исключения: операнд явного `try`/`catch`, `return`
+(сохраняет `!T`) и цель `spawn`.
+
+Частичный `catch:`:
+
+```conv
+let n = readInto(c, buf, 4096) catch:
+  error.Closed => break
+  error.WouldBlock => continue
+  else => propagate
+```
+
+- В `!T`-функции непокрытые коды уходят наверх; `else` необязателен.
+- В `void`-функции `else` обязателен и должен быть `panic(...)`/дивергентным.
+- `else => propagate` допустим только в `!T`-функции.
+- Ошибка не глотается: либо явная ветка, либо propagate/panic.
+
+`errdefer:` выполняется только при ошибочном выходе, LIFO вместе с `defer`.
+`error.*` — compile-time коды: `Closed`, `WouldBlock`, `Io`, `Eof`,
+`Invalid`, `OutOfMemory`, `NoAllocator`, `BadAlignment`, `Bounds`,
+`Cancelled`, `Task`; принимаются и спецификационные написания
+`closed`, `wouldBlock`, `io`, `eof`, `invalidArgument`, `outOfMemory`,
+`noAllocator`, `badAlignment`, `bounds`, `cancelled`, `task`.
+`panic(msg)` завершает процесс с кодом 2.
+
+Сокеты: EOF/закрытие соединения — `error.Closed` (не `0`/пустая строка).
+`defer`/`errdefer` остаются function-level; block-scope cleanup — позже.
 
 ## UTF-8
 
@@ -342,7 +400,11 @@ runtime/cvnrt_alloc.c   аллокаторы, byte-API, debug, память
   освобождаются только на shutdown.
 - Сокеты: только TCP IPv4 (numeric/`localhost`), без DNS/IPv6/UDP/TLS; одна
   незавершённая операция на сокет; `close` во время ожидания не поддержан;
-  `defer` внутри `if`/`while` запрещён (`E-DEFER-CONTROL`).
+  EOF — `error.Closed`. `defer`/`errdefer` внутри `if`/`while` запрещены
+  (`E-DEFER-CONTROL`); block-scope cleanup внутри `try:` не реализован.
+- Ошибки: спецификационная форма `catch e:` не реализована (MVP — `catch:` с
+  `error.<Code>`); нет guards/`_`/payload; `WouldBlock` не выходит из сокетов;
+  auto-try не разворачивает `return`/`spawn`/`try`/`catch`.
 - `runes`/`for`, срезы, `union`/`enum`, `addr`/`p[i]`, `nil`, `{.packed.}`,
   сравнение объектов и строк, debug-аллокатор по умолчанию не реализованы.
 
@@ -362,7 +424,8 @@ $ nimble test
   `generics_*.conv`), fibers (`examples/fibers.conv`, `fiber_*.conv`),
   control flow (`flow_*.conv`), сокеты (`sockets_*.conv`,
   `examples/echo_server.conv`, `examples/echo_client.conv`),
-  `--emit-c` (детерминизм);
+  ошибки (`err_*.conv`, `examples/error_levels.conv`), `--emit-c`
+  (детерминизм);
 - C-fiber: барьер автораспределения, вложенный await, таймеры, fd-readiness.
 - C-net: listen/accept/connect/read/write, EOF, connection refused, invalid
   host/port/kind.

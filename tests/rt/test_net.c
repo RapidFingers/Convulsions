@@ -51,6 +51,7 @@ static void serve_echo(void *p) {
     if (we.code == 0 && memcmp(buf, "ping", 4) == 0)
       ok = 1;
   }
+  cvn_net_shutdown_write(c);
   cvn_net_close(c);
   cvn_task_finish_current(&ok, (int64_t)sizeof ok);
 }
@@ -112,6 +113,7 @@ static void serve_close(void *p) {
     cvn_socket c = ar.u.ok;
     if (cvn_net_write(c, lit("bye")).code == 0)
       ok = 1;
+    cvn_net_shutdown_write(c);
     cvn_net_close(c);
   }
   cvn_task_finish_current(&ok, (int64_t)sizeof ok);
@@ -143,7 +145,8 @@ static int test_eof(void) {
   if (first.tag == 0u)
     cvn_str_deinit(&first.u.ok);
   second = cvn_net_read(client, cvn_c_allocator(), 64);
-  CHECK(second.tag == 0u && second.u.ok.len == 0, "eof empty string");
+  CHECK(second.tag == 1u && second.u.err.code == CVN_ERR_CLOSED,
+        "eof closed error");
   if (second.tag == 0u)
     cvn_str_deinit(&second.u.ok);
   CHECK(cvn_task_await(srv) != NULL, "eof server await");
