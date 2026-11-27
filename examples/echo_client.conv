@@ -1,13 +1,18 @@
 {.profile: kernel.}
 import core/net
+import core/slice
 import core/mem
 import core/io
 
-proc main(): !void =
+proc main(): !void {.propagate.} =
   let a = taskAllocator()
-  let s = try connect("127.0.0.1", 7700)
+  let s = connect("127.0.0.1", 7700)
   defer: s.close()
-  try write(s, "hello")
-  let got = try read(s, a, 4096)
-  defer: got.deinit()
-  try println(got)
+  let buf = newBuffer(a, 1024)
+  defer: deinitBuffer(buf)
+  write(s, "hello".bytes())
+  let n = readInto(s, buf.slice())
+  assert(n == 5)
+  let got = buf.view(n)
+  assert(got.at(0) == 'h')
+  println("echo-client-ok")

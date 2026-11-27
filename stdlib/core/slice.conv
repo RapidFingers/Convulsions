@@ -1,0 +1,39 @@
+{.profile: kernel.}
+{.header: "<cvnrt.h>".}
+import core/mem
+
+type
+  Slice*[T] = object
+    data*: ptr T
+    len*: int
+
+  Buffer* = object
+    data: ptr byte
+    len: int
+    alloc: Allocator
+
+proc sub*[T](s: Slice[T], start: int, count: int): Slice[T] =
+  assert(start >= 0 and count >= 0 and start + count <= s.len)
+  return Slice[T](data: ptrOffset(s.data, start), len: count)
+
+proc at*[T](s: Slice[T], i: int): T =
+  assert(i >= 0 and i < s.len)
+  return ptrOffset(s.data, i)[]
+
+proc bytes*(s: string): Slice[byte] =
+  return Slice[byte](data: stringData(s), len: s.len)
+
+proc newBuffer*(a: Allocator, capacity: int): !Buffer =
+  assert(capacity > 0)
+  let p = try allocBytes(a, capacity)
+  return Buffer(data: p, len: capacity, alloc: a)
+
+proc slice*(b: Buffer): Slice[byte] =
+  return Slice[byte](data: b.data, len: b.len)
+
+proc view*(b: Buffer, n: int): Slice[byte] =
+  assert(n >= 0 and n <= b.len)
+  return Slice[byte](data: b.data, len: n)
+
+proc deinitBuffer*(b: Buffer): void =
+  freeBytes(b.alloc, b.data, b.len)

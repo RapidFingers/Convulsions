@@ -1,14 +1,14 @@
 {.profile: kernel.}
 import core/net
 import core/concurrency
+import core/slice
 import core/mem
-import core/string
 import core/io
 
 proc serve(l: Socket): !void =
   let c = try l.accept()
   defer: c.close()
-  try write(c, "bye")
+  try write(c, "bye".bytes())
   shutdownWrite(c)
 
 proc main(): !void =
@@ -18,13 +18,15 @@ proc main(): !void =
   let s = try connect("127.0.0.1", l.localPort())
   defer: s.close()
   let a = taskAllocator()
-  let got = try read(s, a, 64)
-  defer: got.deinit()
-  assert(equal(got, "bye"))
-  let eof = read(s, a, 64) catch:
-    error.Closed => ""
+  let buf = try newBuffer(a, 64)
+  defer: deinitBuffer(buf)
+  let n = try readInto(s, buf.slice())
+  assert(n == 3)
+  let got = buf.view(n)
+  assert(got.at(0) == 'b')
+  let eof = readInto(s, buf.slice()) catch:
+    error.Closed => 0
     else => propagate
-  defer: eof.deinit()
-  assert(eof.len == 0)
+  assert(eof == 0)
   try await srv
   try println("sockets-eof-ok")

@@ -1,0 +1,20 @@
+{.profile: kernel.}
+import core/slice
+import core/mem
+import core/io
+
+proc main(): !void =
+  let s = "hello".bytes()
+  assert(s.len == 5)
+  assert(s.at(1) == 'e')
+  let t = s.sub(1, 3)
+  assert(t.len == 3)
+  assert(t.at(0) == 'e')
+  assert(t.at(2) == 'l')
+  let b = try newBuffer(taskAllocator(), 8)
+  defer: deinitBuffer(b)
+  let full = b.slice()
+  assert(full.len == 8)
+  let part = b.view(3)
+  assert(part.len == 3)
+  try println("slice-ok")

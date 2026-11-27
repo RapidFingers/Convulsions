@@ -112,7 +112,7 @@ proc typeName*(t: Type): string =
   of tyVoid: "void"
   of tyInt: "int"
   of tyBool: "bool"
-  of tyChar: "char"
+  of tyChar: (if t.name.len > 0: t.name else: "char")
   of tyString: "string"
   of tyRune: "Rune"
   of tyPointer: "pointer"

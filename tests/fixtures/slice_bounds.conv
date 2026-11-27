@@ -1,0 +1,10 @@
+{.profile: kernel.}
+import core/slice
+import core/mem
+
+proc main(): !void =
+  let b = try newBuffer(taskAllocator(), 2)
+  defer: deinitBuffer(b)
+  let s = b.slice()
+  let i = ptrAddr(s.data) % 2 + 3
+  discard s.at(i)

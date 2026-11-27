@@ -1,6 +1,7 @@
 {.profile: kernel.}
 import core/net
 import core/concurrency
+import core/slice
 import core/mem
 import core/string
 import core/io
@@ -8,11 +9,11 @@ import core/io
 proc handle(c: Socket): !void =
   defer: c.close()
   let a = taskAllocator()
-  let buf = try allocBytes(a, 256)
-  defer: freeBytes(a, buf, 256)
-  let n = try readInto(c, buf, 256)
+  let buf = try newBuffer(a, 256)
+  defer: deinitBuffer(buf)
+  let n = try readInto(c, buf.slice())
   if n > 0:
-    try writeBytes(c, buf, n)
+    try write(c, buf.view(n))
 
 proc server(l: Socket): !void =
   var n = 0
@@ -24,11 +25,14 @@ proc server(l: Socket): !void =
 proc client(port: int): !void =
   let s = try connect("127.0.0.1", port)
   defer: s.close()
-  try write(s, "ping")
+  try write(s, "ping".bytes())
   let a = taskAllocator()
-  let got = try read(s, a, 256)
-  defer: got.deinit()
-  assert(equal(got, "ping"))
+  let buf = try newBuffer(a, 256)
+  defer: deinitBuffer(buf)
+  let n = try readInto(s, buf.slice())
+  assert(n == 4)
+  let got = buf.view(n)
+  assert(got.at(0) == 'p')
 
 proc main(): !void =
   let l = try listen("127.0.0.1", 0)

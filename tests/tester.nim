@@ -922,11 +922,27 @@ for workers in [0, 1]:
     checkEq r.output, "producer-consumer-ok\n",
             "producer-consumer: stdout workers=" & $workers
 
+block:
+  let b = buildFixture("slice_basic.conv", "slice_basic")
+  checkEq b.code, 0, "slice: собирается (" & b.output & ")"
+  if b.code == 0:
+    let r = run(b.exe, @[])
+    checkEq r.code, 0, "slice: exit code"
+    checkEq r.output, "slice-ok\n", "slice: stdout"
+
+block:
+  for f in ["slice_bounds.conv", "slice_buffer_bounds.conv"]:
+    let b = buildFixture(f, f.splitFile.name)
+    checkEq b.code, 0, f & ": собирается (" & b.output & ")"
+    if b.code == 0:
+      let r = run(b.exe, @[])
+      checkEq r.code, 2, f & ": assert вне границ"
+
 # ---------------------------------------------------------------- e2e: version
 block:
   let r = run(cvn, @["version"])
   checkEq r.code, 0, "version: exit code"
-  check "0.12.0" in r.output, "version: номер версии"
+  check "0.13.0" in r.output, "version: номер версии"
 
 if failures > 0:
   echo "\n", failures, " проверок провалено"

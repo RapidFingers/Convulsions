@@ -24,6 +24,8 @@ type
     builtinDeinit: Symbol
     builtinAssert: Symbol
     builtinPanic: Symbol
+    builtinStrData: Symbol
+    builtinPtrOffset: Symbol
     builtinSizes: Table[string, Symbol]
     builtinCreate: Symbol
     builtinDestroy: Symbol
@@ -48,6 +50,7 @@ proc makeBuiltins(): Table[string, Type] =
   result["int"] = newType(tyInt, "int")
   result["bool"] = newType(tyBool, "bool")
   result["char"] = newType(tyChar, "char")
+  result["byte"] = newType(tyChar, "byte")
   result["string"] = newType(tyString, "string")
   result["Rune"] = newType(tyRune, "Rune")
   result["ErrorCode"] = newType(tyErrorCode, "ErrorCode")
@@ -937,6 +940,32 @@ proc analCall(s: Sema; n: AstNode): Type =
       n.symId = s.builtinPanic.id
       n.typ = s.builtins["void"]
       return n.typ
+    if cname == "stringData" and s.lookup(cname).isNil:
+      if n.args.len != 1:
+        fail("E-ARG-COUNT", s.curMod.file, n.line, n.col,
+             "stringData ожидает один string")
+      let at = s.analExpr(n.args[0])
+      if at.kind != tyString:
+        fail("E-TYPE", s.curMod.file, n.args[0].line, n.args[0].col,
+             "stringData требует string")
+      n.symId = s.builtinStrData.id
+      n.typ = ptrTo(s.builtins["byte"])
+      return n.typ
+    if cname == "ptrOffset" and s.lookup(cname).isNil:
+      if n.args.len != 2:
+        fail("E-ARG-COUNT", s.curMod.file, n.line, n.col,
+             "ptrOffset ожидает (ptr T, int)")
+      let pt = s.analExpr(n.args[0])
+      if pt.kind != tyPtr:
+        fail("E-TYPE", s.curMod.file, n.args[0].line, n.args[0].col,
+             "ptrOffset требует ptr T")
+      let it = s.analExpr(n.args[1])
+      if it.kind != tyInt:
+        fail("E-TYPE", s.curMod.file, n.args[1].line, n.args[1].col,
+             "ptrOffset: смещение должно быть int")
+      n.symId = s.builtinPtrOffset.id
+      n.typ = pt
+      return n.typ
     let sym = s.lookup(cname)
     if sym == nil:
       fail("E-UNDEF", s.curMod.file, n.callee.line, n.callee.col,
@@ -1501,6 +1530,22 @@ proc analyze*(modules: seq[ModuleInfo]; opts: BuildOptions): Program =
                         builtin: "panic")
   s.builtinPanic = panicSym
   discard s.addSym(panicSym)
+
+  let strDataType = newType(tyProc)
+  strDataType.params = @[s.builtins["string"]]
+  strDataType.ret = ptrTo(s.builtins["byte"])
+  let strDataSym = Symbol(kind: skBuiltin, name: "stringData",
+                          typ: strDataType, builtin: "stringData")
+  s.builtinStrData = strDataSym
+  discard s.addSym(strDataSym)
+
+  let ptrOffsetType = newType(tyProc)
+  ptrOffsetType.params = @[s.builtins["pointer"], s.builtins["int"]]
+  ptrOffsetType.ret = s.builtins["pointer"]
+  let ptrOffsetSym = Symbol(kind: skBuiltin, name: "ptrOffset",
+                            typ: ptrOffsetType, builtin: "ptrOffset")
+  s.builtinPtrOffset = ptrOffsetSym
+  discard s.addSym(ptrOffsetSym)
 
   for nm in ["sizeof", "alignof", "offsetof"]:
     let ty = newType(tyProc)

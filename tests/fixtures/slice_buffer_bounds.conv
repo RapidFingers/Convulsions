@@ -1,0 +1,9 @@
+{.profile: kernel.}
+import core/slice
+import core/mem
+
+proc main(): !void =
+  let b = try newBuffer(taskAllocator(), 4)
+  defer: deinitBuffer(b)
+  let v = b.view(5)
+  discard v.len

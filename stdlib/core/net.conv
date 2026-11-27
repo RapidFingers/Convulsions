@@ -1,6 +1,6 @@
 {.profile: kernel.}
 {.header: "<cvnrt_net.h>".}
-import core/mem
+import core/slice
 
 type
   Socket* {.importc: "cvn_socket", header: "<cvnrt_net.h>".} = object
@@ -14,17 +14,17 @@ proc accept*(s: Socket): !Socket
 proc connect*(host: string, port: int): !Socket
   {.importc: "cvn_net_connect", cdecl.}
 
-proc read*(s: Socket, a: Allocator, maxBytes: int): !string
-  {.importc: "cvn_net_read", cdecl.}
-
-proc readInto*(s: Socket, buf: ptr char, maxBytes: int): !int
+proc cvnNetReadInto(s: Socket, buf: ptr byte, maxBytes: int): !int
   {.importc: "cvn_net_read_into", cdecl.}
 
-proc write*(s: Socket, data: string): !void
-  {.importc: "cvn_net_write", cdecl.}
-
-proc writeBytes*(s: Socket, buf: ptr char, n: int): !void
+proc cvnNetWriteBytes(s: Socket, buf: ptr byte, n: int): !void
   {.importc: "cvn_net_write_bytes", cdecl.}
+
+proc readInto*(s: Socket, buf: Slice[byte]): !int =
+  return cvnNetReadInto(s, buf.data, buf.len)
+
+proc write*(s: Socket, data: Slice[byte]): !void {.propagate.} =
+  cvnNetWriteBytes(s, data.data, data.len)
 
 proc close*(s: Socket): void
   {.importc: "cvn_net_close", cdecl.}

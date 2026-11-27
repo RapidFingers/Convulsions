@@ -1,4 +1,4 @@
-# Convulsions MVP (v0.12): kernel, UTF-8, объекты, аллокаторы, generics, fibers, sockets, ошибки, Channel
+# Convulsions MVP (v0.13): kernel, UTF-8, объекты, аллокаторы, generics, fibers, sockets, ошибки, Channel, Slice
 
 Минимальный компилятор языка Convulsions: профиль `kernel`, бэкенд `native`
 (HIR → C11 → gcc). Реализует hello world, UTF-8-модель `string` (README §6.7),
@@ -6,7 +6,8 @@ value-объекты и их аллокацию в куче (§6.2, §3.6), ал
 отчёт об утечках с типом и `file:line`, мономорфизируемые дженерики (§6.3),
 `spawn`/`await` под исполнителем `fiber` с пулом воркеров и event loop (§4),
 TCP-сокеты поверх фибр, уровни обработки ошибок `try:`/`{.propagate.}`/
-частичный `catch:`/`errdefer` и fiber-aware `Channel` для producer–consumer.
+частичный `catch:`/`errdefer`, fiber-aware `Channel` и `Slice[T]`/`Buffer`
+для бинарных данных без `ptr char` в API.
 Спецификация языка — [../README.md](../README.md).
 
 ## Сборка и запуск
@@ -36,7 +37,7 @@ $ bin/cvn build examples/fibers.conv --workers=1 -o build/fibers1
 $ bin/cvn build examples/echo_server.conv -o build/echo_server
 $ build/echo_server        # слушает 127.0.0.1:7700
 $ bin/cvn run examples/echo_client.conv
-hello
+echo-client-ok
 ```
 
 `stdlib` и `runtime` ищутся рядом с бинарником (`bin/../stdlib`,
@@ -55,9 +56,10 @@ hello
 | Дженерики | `[T]` у типов/процедур, `Box[int]`, вывод и явная конкретизация, вложенность, `create(Box[int])` |
 | Fibers | `spawn f(args)`, `await t`, `sleep(ms)`, пул воркеров, event loop, `--workers`, `--stack-size` |
 | Channel | `newChannel(a, capacity)`, `send`, `recv`, `closeChannel`, `freeChannel`; bounded строковый канал на fibers |
+| Slice | `Slice[T]`, `Slice[byte]`, `sub`, `at`, `bytes`, `Buffer`, `newBuffer`, `slice`, `view`, `deinitBuffer` |
 | Control flow | `if/elif/else`, `while`, `break`, `continue`, `true/false` |
 | Ошибки | `try expr`, `try:`-блок, `{.propagate.}`, частичный `catch:` с `error.<Code>`, `errdefer:`, `panic` |
-| Сокеты | `core/net`: `Socket`, `listen/accept/connect/read/readInto/write/writeBytes/close/shutdownWrite/localPort`, TCP IPv4 |
+| Сокеты | `core/net`: `Socket`, `listen/accept/connect/readInto(Slice[byte])/write(Slice[byte])/close/shutdownWrite/localPort`, TCP IPv4 |
 | Аллокаторы | `null/c/page/fixed/arena/stack/task`, `initDebug`, байтовые `alloc/free/realloc`, `memFill/memByte/...` |
 | Выражения | имена, вызовы, UFCS, `try`, `-`, `not`, арифметика, сравнения скаляров, `s.len`, `sizeof/alignof/offsetof`, `T(x)` |
 | Операторы | `let`, `var`, `return`, `discard`, `defer:`, `try`, `assert(cond[, "msg"])`, присваивание `lhs = expr` |
@@ -268,6 +270,35 @@ preemption, `thread`-исполнителя, каналов/мьютексов/�
 завершения программы. Программы без `spawn`/`await` не запускают потоки.
 Сетевые сокеты — следующий милстоун поверх event loop.
 
+## Slice и Buffer
+
+`Slice[T]` — невладеющий срез (`data: ptr T`, `len`), 16 байт:
+
+```conv
+let s = "hello".bytes()      # Slice[byte], zero-copy
+assert(s.len == 5)
+assert(s.at(1) == 'e')
+let t = s.sub(1, 3)
+assert(t.at(0) == 'e')
+```
+
+`byte` — алиас `char`/`uint8_t`; `Slice[byte]` — основной бинарный тип.
+`sub`/`at` проверяют границы через `assert`; срез не продлевает жизнь
+backing storage.
+
+`Buffer` — владеющий байтовый буфер:
+
+```conv
+let buf = try newBuffer(taskAllocator(), 4096)
+defer: deinitBuffer(buf)
+let all = buf.slice()
+let part = buf.view(100)
+```
+
+`Buffer` освобождает память в `deinitBuffer`; копирование владеющего буфера
+запрещено соглашением (иначе double free). Для чтения из сокета используется
+`readInto(s, buf.slice())`, затем `buf.view(n)`.
+
 ## Сокеты
 
 TCP IPv4 поверх `fiber`: все ожидания (`accept`, `connect`, `read`, `write`)
@@ -279,14 +310,13 @@ TCP IPv4 поверх `fiber`: все ожидания (`accept`, `connect`, `re
 # сервер
 proc handle(c: Socket): !void {.propagate.} =
   defer: c.close()
-  let a = taskAllocator()
-  let buf = allocBytes(a, 4096)
-  defer: freeBytes(a, buf, 4096)
+  let buf = newBuffer(taskAllocator(), 4096)
+  defer: deinitBuffer(buf)
   while true:
-    let n = readInto(c, buf, 4096) catch:
+    let n = readInto(c, buf.slice()) catch:
       error.Closed => break
       error.WouldBlock => continue
-    writeBytes(c, buf, n)
+    write(c, buf.view(n))
 
 let l = try listen("0.0.0.0", 7700)
 while true:
@@ -294,22 +324,21 @@ while true:
   discard spawn handle(c)
 
 # клиент
-let a = taskAllocator()
+let buf = try newBuffer(taskAllocator(), 4096)
+defer: deinitBuffer(buf)
 let s = try connect("127.0.0.1", 7700)
 defer: s.close()
-try write(s, "hello")
-let got = try read(s, a, 4096)
-defer: got.deinit()
+try write(s, "hello".bytes())
+let n = try readInto(s, buf.slice())
 ```
 
-API: `listen(host, port)`, `accept`, `connect`, `read(s,a,max)`, `readInto`,
-`write`, `writeBytes`, `close`, `shutdownWrite`, `localPort`;
-`core/string.equal` сравнивает содержимое. IPv4 numeric и `localhost`;
-DNS/IPv6/UDP/TLS нет. `read` аллоцирует строку (нужен `deinit`), `readInto`
-пишет в буфер. EOF/закрытие — `error.Closed`, а не `0`/пустая строка.
-Одна незавершённая операция на сокет; `close` во время ожидания не поддержан.
-В `if`/`while` нельзя `defer` (`E-DEFER-CONTROL`); в сервере defer — на
-уровне `handle`.
+API: `listen(host, port)`, `accept`, `connect`, `readInto(s, Slice[byte])`,
+`write(s, Slice[byte])`, `close`, `shutdownWrite`, `localPort`. Payload —
+только `Slice[byte]`; строки/`ptr char` из бинарного API удалены. Хост — строка.
+`"hello".bytes()` — zero-copy view; `Buffer` — владеющий буфер для чтения.
+EOF/закрытие — `error.Closed`. Одна незавершённая операция на сокет;
+`close` во время ожидания не поддержан. В `if`/`while` нельзя `defer`
+(`E-DEFER-CONTROL`); в сервере defer — на уровне `handle`.
 
 ## Producer–consumer на fibers
 
@@ -383,7 +412,7 @@ proc main(): !void {.propagate.} =
 Частичный `catch:`:
 
 ```conv
-let n = readInto(c, buf, 4096) catch:
+let n = readInto(c, buf.slice()) catch:
   error.Closed => break
   error.WouldBlock => continue
   else => propagate
@@ -448,6 +477,10 @@ runtime/cvnrt_alloc.c   аллокаторы, byte-API, debug, память
   `Channel[T]`, unbounded, `select`/fan-in, отмены; ожидание — cooperative
   yield (busy-переключения), а не wait queue; `freeChannel` только после
   завершения всех задач.
+- Slice/Buffer: `Slice[T]` невладеющий и без lifetime-проверок; `byte` — алиас
+  `char`; `Buffer` только байтовый и передаётся по значению (копия = два
+  владельца); нет `Slice[T]`-cap, range-синтаксиса, `s[i]`, growable buffer;
+  `sub`/`at` — assert, не `!T`.
 - Сокеты: только TCP IPv4 (numeric/`localhost`), без DNS/IPv6/UDP/TLS; одна
   незавершённая операция на сокет; `close` во время ожидания не поддержан;
   EOF — `error.Closed`. `defer`/`errdefer` внутри `if`/`while` запрещены
@@ -477,7 +510,8 @@ $ nimble test
   control flow (`flow_*.conv`), сокеты (`sockets_*.conv`,
   `examples/echo_server.conv`, `examples/echo_client.conv`),
   ошибки (`err_*.conv`, `examples/error_levels.conv`), `--emit-c`
-  (детерминизм);
+  (детерминизм), Slice/Buffer (`slice_basic.conv`, `slice_bounds.conv`,
+  `slice_buffer_bounds.conv`, `--workers=1` для producer/consumer);
 - C-fiber: барьер автораспределения, вложенный await, таймеры, fd-readiness.
 - C-net: listen/accept/connect/read/write, EOF, connection refused, invalid
   host/port/kind.

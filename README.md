@@ -283,9 +283,10 @@ $ ./build/server-fiber --listen :7777
 | `core/mem` | `Allocator`, `nullAllocator`, `cAllocator`, `pageAllocator`, `fixedAllocator`, `arenaAllocator`, `stackAllocator`, `taskAllocator`, `initDebug`, байтовые `alloc*/free*` | есть в 0.9.0 |
 | `core/seq` | `newSeq`, `seqOf`, `dupe`, `add`, `setLen`, `toSlice` | есть в 0.9.0 |
 | `core/string` | `concat`, `dupe`, `find`, `split`, `runeAt`, `runeOffset`, `runeLen`, `runes`, `validate`, `rune`, `fromRune`, `equal` | есть в 0.9.0 |
+| `core/slice` | `Slice[T]`, `Slice[byte]`, `sub`, `at`, `bytes`, `Buffer`, `newBuffer`, `slice`, `view`, `deinitBuffer` | v0.13 |
 | `core/error` | `ErrorCode`, `error`, `errorMessage`, `errorString` | есть в 0.9.0 |
 | `core/io` | `Fd`, `readFull`, `writeAll`, `println`, `listen`, `accept`, `close` | 0.9.0 (IOCP/epoll — M4) |
-| `core/net` | `Socket`, `listen`, `accept`, `connect`, `read`, `readInto`, `write`, `writeBytes`, `close`, `shutdownWrite`, `localPort` | v0.10, TCP IPv4 поверх fiber (EOF→Closed в v0.11) |
+| `core/net` | `Socket`, `listen`, `accept`, `connect`, `readInto(Slice[byte])`, `write(Slice[byte])`, `close`, `shutdownWrite`, `localPort` | v0.13, TCP IPv4 поверх fiber |
 | `core/concurrency` | `sleep`, `Channel`/`newChannel`/`send`/`recv`/`closeChannel`/`freeChannel`, `Task`, `Executor`-реализации, `Mutex`, `Select`, `parallel`, `withScope`, `spawnBlocking` | 0.9.0, кроме `Select` (v0.7); Channel — v0.12 |
 | `core/handle` | `GcHandle` (тип без GC-кода), упаковка `index << 32 \| gen` | v0.8 |
 | `core/gc` | `gcAllocator`, `gcHandle`, `gcRelease`, `gcDeref`, `gcAttachThread`, `gcDetachThread`, `foreignToException` | v0.8 |
@@ -1102,8 +1103,9 @@ C-библиотеки; OS-поток — наоборот. Если бы фиб
 `errdefer:`, `panic("...")`. Propagating context — `try:`/`{.propagate.}`;
 непокрытый `catch` в `!T`-функции уходит наверх, в `void`-функции обязателен
 `else => panic(...)`. `error.*` — compile-time `ErrorCode`; добавлены
-`Closed`/`WouldBlock`. Сокеты: EOF теперь `error.Closed`, `read`/`readInto`
-не возвращают пустую строку/0; добавлен `shutdownWrite`. Коды принимаются в
+`Closed`/`WouldBlock`. Сокеты: EOF теперь `error.Closed`; `readInto` пишет
+`Slice[byte]` и не возвращает пустую строку; `read`/`write` со строкой удалены
+в v0.13. Коды принимаются в
 написании `error.Closed` и в спецификационном `error.closed`.
 
 Спецификационная форма `catch e:` из §5.2 в MVP v0.11 ещё не реализована:
@@ -1117,6 +1119,13 @@ C-библиотеки; OS-поток — наоборот. Если бы фиб
 Канал yield-ит фибру при заполнении/опустошении (`cvn_task_yield` через
 планировщик), поэтому producer–consumer работает и с `--workers=1`.
 Полезная нагрузка MVP — `string`; generic `Channel[T]` — следующий милстоун.
+
+Реализация v0.13: невладеющий `Slice[T]` (`data: ptr T`, `len`) и владеющий
+`Buffer` в `core/slice`; `byte` — алиас `char`/`uint8_t`. Сокеты принимают
+`Slice[byte]` в `readInto`/`write`; строковые `read`/`write` и `ptr char`
+удалены из language API. `"hello".bytes()` — zero-copy view на строку;
+`newBuffer`/`view`/`deinitBuffer` — для чтения. C-ABI сокетов остаётся
+`pointer + length`.
 
 ### 4.1 Что именно является языком, а что библиотекой
 

@@ -1,19 +1,19 @@
 {.profile: kernel.}
 import core/net
 import core/concurrency
+import core/slice
 import core/mem
 import core/io
 
 proc handle(c: Socket): !void {.propagate.} =
   defer: c.close()
-  let a = taskAllocator()
-  let buf = allocBytes(a, 4096)
-  defer: freeBytes(a, buf, 4096)
+  let buf = newBuffer(taskAllocator(), 4096)
+  defer: deinitBuffer(buf)
   while true:
-    let n = readInto(c, buf, 4096) catch:
+    let n = readInto(c, buf.slice()) catch:
       error.Closed => break
       error.WouldBlock => continue
-    writeBytes(c, buf, n)
+    write(c, buf.view(n))
 
 proc main(): !void {.propagate.} =
   let l = listen("0.0.0.0", 7700)

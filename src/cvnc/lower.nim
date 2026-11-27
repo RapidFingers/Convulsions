@@ -265,6 +265,25 @@ proc lowerExprRaw(l: Lower; n: AstNode): int =
         ins.text = n.args[1].name
       l.emit(ins)
       return
+    if callee.builtin == "stringData":
+      let a = l.lowerExpr(n.args[0])
+      result = l.newSlot(n.typ)
+      var ins = newInstr(hiStrPtr)
+      ins.dst = result
+      ins.a = a
+      l.emit(ins)
+      return
+    if callee.builtin == "ptrOffset":
+      let a = l.lowerExpr(n.args[0])
+      let b = l.lowerExpr(n.args[1])
+      result = l.newSlot(n.typ)
+      var ins = newInstr(hiPtrOffset)
+      ins.dst = result
+      ins.a = a
+      ins.b = b
+      ins.typeRef = n.typ
+      l.emit(ins)
+      return
     if callee.builtin == "create":
       let a = l.lowerExpr(n.args[0])
       result = l.newSlot(n.typ)
